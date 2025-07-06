@@ -1,0 +1,11 @@
+client_name,client_email,client_address,client_phone,invoice_total,invoice_status,item_description,item_quantity,item_price,item_total
+Indrit Domi,indrit@email.com,Tirane,123456789,85.58,paid,Kase telefoni,17.12,5.00,85.58
+Indrit Domi,indrit@email.com,Tirane,123456789,64.70,paid,Leter 80,12.94,5.00,64.70
+Indrit Domi,indrit@email.com,Tirane,123456789,30.00,paid,Bllok,6.00,5.00,30.00
+Indrit Domi,indrit@email.com,Tirane,123456789,150.00,paid,Boje akrilike,1.00,150.00,150.00
+Indrit Domi,indrit@email.com,Tirane,123456789,25.00,paid,Uje Lajthiza,5.00,5.00,25.00
+Indrit Domi,indrit@email.com,Tirane,123456789,165.00,paid,Uje Tepelena,33.00,5.00,165.00
+Indrit Domi,indrit@email.com,Tirane,123456789,543.24,paid,Gome,60.36,9.00,543.24
+Indrit Domi,indrit@email.com,Tirane,123456789,547.50,paid,Printer,109.50,5.00,547.50
+Indrit Domi,indrit@email.com,Tirane,123456789,273.75,paid,Cante shkolle,54.75,5.00,273.75
+Indrit Domi,indrit@email.com,Tirane,123456789,120.00,paid,Your Item,1.00,120.00,120.00 
