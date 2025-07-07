@@ -70,6 +70,7 @@ class ImportService implements ImportServiceInterface
                 }
                 $clientCache = [];
                 $invoiceMap = [];
+                $invoiceItemsMap = [];
                 for ($i = 1; $i < count($sheet); $i++) {
                     $row = $sheet[$i];
                     $rowNum = $i + 1;
@@ -104,30 +105,39 @@ class ImportService implements ImportServiceInterface
                             'status' => $row[5] ?? 'pending',
                             'created_by' => $userId,
                         ]);
-                        // Fiscalize the invoice after creation
-                        try {
-                            $fiscalizationService = new FiscalizationService();
-                            $fiscalizationService->fiscalize($invoice);
-                        } catch (\Exception $e) {
-                            $errors[] = "Row $rowNum: Fiscalization failed: " . $e->getMessage();
-                        }
                         $invoiceMap[$invoiceKey] = $invoice;
                         $createdInvoiceIds[] = $invoice->id;
+                        $invoiceItemsMap[$invoiceKey] = [];
                     } else {
                         $invoice = $invoiceMap[$invoiceKey];
                     }
-                    // Item
+                    // Collect item data for this invoice
+                    $invoiceItemsMap[$invoiceKey][] = [
+                        'description' => $row[6],
+                        'quantity' => $row[7],
+                        'price' => $row[8],
+                        'total' => $row[9] ?? ($row[7] * $row[8]),
+                    ];
+                }
+                // Now, create items and fiscalize for each invoice
+                foreach ($invoiceMap as $invoiceKey => $invoice) {
+                    $items = $invoiceItemsMap[$invoiceKey] ?? [];
+                    foreach ($items as $itemData) {
+                        try {
+                            InvoiceItem::create(array_merge($itemData, [
+                                'invoice_id' => $invoice->id
+                            ]));
+                            $successCount++;
+                        } catch (\Exception $e) {
+                            $errors[] = "Invoice ID {$invoice->id}: " . $e->getMessage();
+                        }
+                    }
+                    // Fiscalize after all items are created
                     try {
-                        InvoiceItem::create([
-                            'invoice_id' => $invoice->id,
-                            'description' => $row[6],
-                            'quantity' => $row[7],
-                            'price' => $row[8],
-                            'total' => $row[9] ?? ($row[7] * $row[8]),
-                        ]);
-                        $successCount++;
+                        $fiscalizationService = new FiscalizationService();
+                        $fiscalizationService->fiscalize($invoice);
                     } catch (\Exception $e) {
-                        $errors[] = "Row $rowNum: " . $e->getMessage();
+                        $errors[] = "Fiscalization failed for invoice ID {$invoice->id}: " . $e->getMessage();
                     }
                 }
                 $import->status = 'completed';
@@ -201,10 +211,10 @@ class ImportService implements ImportServiceInterface
                     ]);
                     // Fiscalize
                     try {
-                        $fiscalizationService = new \App\Services\FiscalizationService();
+                        $fiscalizationService = new FiscalizationService();
                         $fiscalizationService->fiscalize($invoice);
                     } catch (\Exception $e) {
-                        $errors[] = 'Fiscalization failed: ' . $e->getMessage();
+                        $errors[] = "Fiscalization failed for invoice ID {$invoice->id}: " . $e->getMessage();
                     }
                     // Add items
                     foreach ($items as $item) {
