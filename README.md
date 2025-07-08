@@ -130,3 +130,109 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Support
 
 For support, email support@example.com or create an issue in the GitHub repository.
+
+## API Documentation
+
+### Authentication
+All endpoints require authentication as an admin user unless otherwise specified.
+
+---
+
+### 1. Upload Import (Create)
+**POST** `/api/imports`
+
+- **Description:** Upload and import invoices from an Excel file (admin only).
+- **Request:**
+  - Content-Type: `multipart/form-data`
+  - Body:
+    - `file`: Excel file (.xlsx, .xls)
+- **Success Response:**
+  - Status: `201 Created`
+  - Body:
+    ```json
+    {
+      "import_id": 1,
+      "success_count": 2,
+      "errors": [],
+      "invoice_ids": [1,2]
+    }
+    ```
+- **Error Responses:**
+  - `422 Unprocessable Entity`: Validation error (missing or invalid file)
+    ```json
+    { "errors": { "file": ["The file field is required."] } }
+    ```
+  - `403 Forbidden`: Not authenticated or not admin
+    ```json
+    { "error": "Forbidden" }
+    ```
+
+---
+
+### 2. Update Import
+**PUT** `/api/imports/{id}`
+
+- **Description:** Update an import's status or replace the file (admin only).
+- **Request:**
+  - Content-Type: `multipart/form-data`
+  - Body (any of):
+    - `status`: string
+    - `file`: Excel file (.xlsx, .xls)
+- **Success Response:**
+  - Status: `200 OK`
+  - Body: Import object (JSON)
+- **Error Responses:**
+  - `422 Unprocessable Entity`: Validation error
+  - `403 Forbidden`: Not authenticated or not admin
+  - `400 Bad Request`: Other errors
+
+---
+
+### 3. Delete Import
+**DELETE** `/api/imports/{id}`
+
+- **Description:** Delete an import (admin only).
+- **Success Response:**
+  - Status: `200 OK`
+  - Body:
+    ```json
+    { "message": "Import deleted successfully." }
+    ```
+- **Error Responses:**
+  - `403 Forbidden`: Not authenticated or not admin
+  - `400 Bad Request`: Other errors
+
+---
+
+### 4. List Imports (Paginated)
+**GET** `/api/imports?per_page=15`
+
+- **Description:** List all imports (admin only, paginated).
+- **Request Parameters:**
+  - `per_page` (optional): Number of results per page (default: 15)
+- **Success Response:**
+  - Status: `200 OK`
+  - Body: Paginated list of imports (JSON)
+- **Error Responses:**
+  - `403 Forbidden`: Not authenticated or not admin
+
+---
+
+### 5. Public List Imports (Paginated)
+**GET** `/public/imports?per_page=15`
+
+- **Description:** List all imports (public, paginated).
+- **Request Parameters:**
+  - `per_page` (optional): Number of results per page (default: 15)
+- **Success Response:**
+  - Status: `200 OK`
+  - Body: Paginated list of imports (JSON)
+
+---
+
+### Error Codes
+- `200 OK`: Successful request
+- `201 Created`: Resource created
+- `400 Bad Request`: General error (see message)
+- `403 Forbidden`: Not authenticated or not admin
+- `422 Unprocessable Entity`: Validation error (see errors object)
