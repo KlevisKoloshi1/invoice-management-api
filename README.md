@@ -111,6 +111,58 @@ Automatically detects columns with Albanian headers:
 - `sasia` (quantity)
 - `cmimi` (price)
 
+---
+
+## Supported 2RM Lab Excel Format
+
+This application is designed to import real-world Excel files exported from 2RM Lab (Albanian sales software), including all the quirks of their report format:
+
+- Multiple invoice blocks per file
+- Metadata and blank rows at the top or between invoices
+- Blank rows between invoice blocks and item headers
+- Item headers in any order, with or without extra columns
+- Albanian characters and accents in headers
+- No need to manually reformat the exported file
+
+**Each invoice block must contain:**
+- A line with both `Nr:` and `Date dokumenti:`
+- A client info line (e.g., `Klienti: ...`, `Emri: ...`, `NIPT: ...`)
+- An item header row with at least: `Përshkrimi`, `Sasia`, `Çmimi` (unit is optional)
+- Item rows, followed by a summary row (e.g., `Shuma`)
+
+**Example:**
+```
+RAPORT SHITJE
+Data: 01.07.2024
+
+Nr: 12345        Date dokumenti: 01.07.2024
+Klienti: 001     Emri: John Doe     NIPT: L12345678A
+
+Përshkrimi       Njësia     Sasia     Çmimi     Totali
+Ujë              copë       2         100       200
+Bukë             copë       1         50        50
+Shuma                                   250
+
+Nr: 12346        Date dokumenti: 01.07.2024
+Klienti: 002     Emri: Jane Smith     NIPT: L87654321B
+
+Përshkrimi       Njësia     Sasia     Çmimi     Totali
+Kafe             copë       3         80        240
+Çaj              copë       2         60        120
+Shuma                                   360
+```
+
+**Instructions:**
+- Do not edit or reformat the exported file. The importer is designed to work with the file as exported from 2RM Lab.
+- Save as `.xlsx` (not `.csv` or `.xls`).
+- Upload the file using the import form.
+
+## Troubleshooting Import Errors
+
+- If you see errors about "item header not found," check that the item header row is present, not merged, and each header is in its own cell.
+- If you see "no invoices detected," ensure each invoice block starts with `Nr:` and `Date dokumenti:`.
+- The importer is robust to blank rows, extra columns, and header order. If you encounter issues, check the Laravel log (`storage/logs/laravel.log`) for details on what the parser is seeing.
+
 ## Fiscalization
 
 The system automatically fiscalizes invoices using the Albanian tax system. Ensure your fiscalization service is properly configured in the environment variables.
