@@ -6,3 +6,16 @@
 
 // Bootstrap
 @import 'bootstrap/scss/bootstrap';
+
+// Fix oversized pagination arrows
+.pagination svg {
+  width: 1em !important;
+  height: 1em !important;
+}
+
+// Center pagination
+.pagination {
+  justify-content: center;
+  display: flex;
+  margin-top: 1rem;
+}

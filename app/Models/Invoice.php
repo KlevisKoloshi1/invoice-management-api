@@ -10,6 +10,8 @@ class Invoice extends Model
         'client_id', 'total', 'status', 'fiscalized', 'fiscalization_response', 'fiscalized_at',
         'iic', 'fic', 'tin', 'crtd', 'ord', 'bu', 'cr', 'sw', 'prc', 'fiscalization_status', 'fiscalization_url',
         'created_by',
+        'number',
+        'invoice_date',
     ];
 
     public function client()

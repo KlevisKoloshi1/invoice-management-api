@@ -43,10 +43,11 @@ class ImportWebController extends Controller
         if (!empty($result['errors'])) {
             return redirect()->back()->withErrors($result['errors'])->withInput();
         }
-        if (isset($result['invoice_ids']) && count($result['invoice_ids']) > 0) {
-            return redirect()->route('imports.invoices', ['ids' => implode(',', $result['invoice_ids'])]);
+        $invoiceIds = isset($result['invoice_ids']) ? $result['invoice_ids'] : [];
+        if (count($invoiceIds) > 0) {
+            return redirect()->route('imports.invoices', ['ids' => implode(',', $invoiceIds)]);
         }
-        return redirect()->route('imports.index')->with('status', 'Import completed. Success: ' . $result['success_count']);
+        return redirect()->route('imports.invoices', ['ids' => '']);
     }
 
     public function edit(Import $import)
@@ -96,8 +97,10 @@ class ImportWebController extends Controller
 
     public function importedInvoices(Request $request)
     {
-        $ids = explode(',', $request->query('ids', ''));
-        $invoices = \App\Models\Invoice::whereIn('id', $ids)->get();
+        $ids = array_filter(explode(',', $request->query('ids', '')));
+        $invoices = count($ids) > 0
+            ? \App\Models\Invoice::whereIn('id', $ids)->get()
+            : collect(); // empty collection if no IDs
         return view('imports.imported_invoices', compact('invoices'));
     }
 }

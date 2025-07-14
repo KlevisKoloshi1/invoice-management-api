@@ -10,13 +10,13 @@ Route::get('/', function () {
 });
 
 // Admin routes (should be protected by auth middleware in real use)
-Route::post('/api/imports', [ImportController::class, 'store']);
-Route::put('/api/imports/{id}', [ImportController::class, 'update']);
-Route::delete('/api/imports/{id}', [ImportController::class, 'destroy']);
-Route::get('/api/imports', [ImportController::class, 'index']);
+// Route::post('/api/imports', [ImportController::class, 'store']);
+// Route::put('/api/imports/{id}', [ImportController::class, 'update']);
+// Route::delete('/api/imports/{id}', [ImportController::class, 'destroy']);
+// Route::get('/api/imports', [ImportController::class, 'index']);
 
 // Public route
-Route::get('/public/imports', [ImportController::class, 'publicIndex']);
+// Route::get('/public/imports', [ImportController::class, 'publicIndex']);
 
 // Allow all logged-in users to view uploads
 Route::get('/imports', [ImportWebController::class, 'index'])->name('imports.index');

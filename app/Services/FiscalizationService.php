@@ -5,17 +5,20 @@ namespace App\Services;
 use App\Models\Invoice;
 use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Config;
 
 class FiscalizationService
 {
     protected $client;
+    protected $config;
 
     public function __construct()
     {
         $this->client = new Client();
+        $this->config = config('services.fiscalization');
     }
 
-    public function fiscalize(Invoice $invoice)
+    public function fiscalize(Invoice $invoice, $meta = [])
     {
         try {
             // Fetch invoice items
@@ -50,31 +53,50 @@ class FiscalizationService
                 return;
             }
 
+            // Build ServerConfig as per API docs
+            $serverConfig = [
+                'Url_API' => $this->config['url'],
+                'DB_Config' => $this->config['db_config'],
+                'Company_DB_Name' => $this->config['company_db_name'],
+            ];
+
+            // Use meta fields if provided, else fallback to invoice fields
+            $invoiceNumber = $meta['number'] ?? $invoice->number ?? null;
+            $invoiceDate = $meta['date'] ?? $invoice->invoice_date ?? ($invoice->created_at ? $invoice->created_at->format('Y-m-d') : now()->format('Y-m-d'));
+            $clientTIN = $meta['client_tin'] ?? $invoice->client->tin ?? null;
+
+            // Build payload as per Elif API docs
             $payload = [
                 'body' => [
                     [
                         'cmd' => 'insert',
-                        'sales_date' => $invoice->created_at ? $invoice->created_at->format('Y-m-d H:i:s') : now()->format('Y-m-d H:i:s'),
+                        'sales_date' => $invoiceDate,
                         'customer_name' => (string)$invoice->client->name,
+                        'invoice_number' => $invoiceNumber,
+                        'client_tin' => $clientTIN,
                         'exchange_rate' => 1,
-                        'city_id' => 1,
-                        'warehouse_id' => 1,
-                        'automatic_payment_method_id' => 1,
-                        'currency_id' => 1,
+                        'city_id' => 1, // TODO: make configurable if needed
+                        'warehouse_id' => 1, // TODO: make configurable if needed
+                        'automatic_payment_method_id' => 1, // TODO: make configurable if needed
+                        'currency_id' => 1, // TODO: make configurable if needed
                         'sales_document_serial' => null,
-                        'cash_register_id' => 1,
+                        'cash_register_id' => 1, // TODO: make configurable if needed
                         'fiscal_delay_reason_type' => null,
-                        'fiscal_invoice_type_id' => 1,
-                        'fiscal_profile_id' => 1,
+                        'fiscal_invoice_type_id' => 1, // TODO: make configurable if needed
+                        'fiscal_profile_id' => 1, // TODO: make configurable if needed
                         'details' => $details,
                     ]
-                ]
+                ],
+                'IsEncrypted' => false,
+                'ServerConfig' => json_encode($serverConfig),
+                'App' => 'web',
+                'Language' => 'sq-AL',
             ];
 
             // Log the full payload including details
             \Log::info('Fiscalization request for invoice ' . $invoice->id, ['payload' => $payload]);
 
-            $response = $this->client->post('https://efiskalizimi-app-test.tatime.gov.al/sales.php', [
+            $response = $this->client->post($this->config['url'] . '/sales.php', [
                 'headers' => [
                     'Content-Type' => 'application/json',
                     'App' => 'web',
@@ -86,21 +108,33 @@ class FiscalizationService
             \Log::info('Fiscalization response for invoice ' . $invoice->id, ['response' => $responseBody]);
 
             $invoice->fiscalization_response = json_encode($responseBody);
-            if (isset($responseBody['qrcode_url']) && $responseBody['qrcode_url']) {
+            // Handle status codes and qrcode_url as per API docs
+            if (isset($responseBody['status']['code']) && $responseBody['status']['code'] == 600 && isset($responseBody['qrcode_url']) && $responseBody['qrcode_url']) {
                 $invoice->fiscalized = true;
                 $invoice->fiscalization_status = 'success';
                 $invoice->fiscalization_url = $responseBody['qrcode_url'];
                 $invoice->fiscalized_at = now();
-            } else if (isset($responseBody['error'])) {
-                $invoice->fiscalized = false;
-                $invoice->fiscalization_status = 'failed';
-                $invoice->fiscalization_response = $responseBody['error'];
+                // Save all required fields for verification URL
+                $invoice->iic = $responseBody['iic'] ?? null;
+                $invoice->tin = $responseBody['tin'] ?? $clientTIN ?? null;
+                $invoice->crtd = $responseBody['crtd'] ?? ($invoiceDate ? $invoiceDate . 'T00:00:00+01:00' : null);
+                $invoice->ord = $responseBody['ord'] ?? null;
+                $invoice->bu = $responseBody['bu'] ?? null;
+                $invoice->cr = $responseBody['cr'] ?? null;
+                $invoice->sw = $responseBody['sw'] ?? null;
+                $invoice->prc = $responseBody['prc'] ?? $invoice->total ?? null;
             } else {
                 $invoice->fiscalized = false;
                 $invoice->fiscalization_status = 'failed';
-                \Log::warning('Fiscalization API returned null for invoice ' . $invoice->id, ['payload' => $payload]);
+                $errorMsg = isset($responseBody['status']['message']) ? $responseBody['status']['message'] : (isset($responseBody['error']) ? $responseBody['error'] : 'Unknown error');
+                $invoice->fiscalization_response = $errorMsg;
             }
             $invoice->save();
+            // Return the verification URL if fiscalized
+            if ($invoice->fiscalized) {
+                return $this->generateVerificationUrl($invoice);
+            }
+            return null;
         } catch (\Exception $e) {
             \Log::error('Fiscalization failed for invoice ' . $invoice->id . ': ' . $e->getMessage());
             $invoice->fiscalized = false;

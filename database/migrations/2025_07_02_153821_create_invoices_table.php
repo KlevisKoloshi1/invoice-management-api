@@ -30,6 +30,8 @@ return new class extends Migration
             $table->decimal('prc', 15, 2)->nullable();
             $table->string('fiscalization_status')->nullable();
             $table->string('fiscalization_url')->nullable();
+            $table->string('number')->nullable();
+            $table->date('invoice_date')->nullable();
             $table->timestamps();
         });
     }
