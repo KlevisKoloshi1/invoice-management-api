@@ -27,10 +27,12 @@ class FiscalizationService
             foreach ($items as $item) {
                 $details[] = [
                     'item_code' => (string)($item->id),
-                    'item_name' => (string)($item->description ?? 'Unknown'),
+                    'item_name' => (string)($item->item_name ?? $item->description ?? 'Unknown'),
                     'item_quantity' => (float)$item->quantity,
                     'item_price' => (float)$item->price,
-                    'tax_rate' => isset($item->tax_rate) ? (float)$item->tax_rate : 20.0,
+                    'item_total_before_vat' => (float)($item->item_total_before_vat ?? 0),
+                    'item_vat_amount' => (float)($item->item_vat_amount ?? 0),
+                    'item_vat_rate' => (float)($item->item_vat_rate ?? $item->vat_rate ?? 0),
                     'unit' => isset($item->unit) ? (string)$item->unit : 'pcs',
                 ];
             }
@@ -70,20 +72,22 @@ class FiscalizationService
                 'body' => [
                     [
                         'cmd' => 'insert',
-                        'sales_date' => $invoiceDate,
-                        'customer_name' => (string)$invoice->client->name,
-                        'invoice_number' => $invoiceNumber,
-                        'client_tin' => $clientTIN,
-                        'exchange_rate' => 1,
-                        'city_id' => 1, // TODO: make configurable if needed
-                        'warehouse_id' => 1, // TODO: make configurable if needed
-                        'automatic_payment_method_id' => 1, // TODO: make configurable if needed
-                        'currency_id' => 1, // TODO: make configurable if needed
-                        'sales_document_serial' => null,
-                        'cash_register_id' => 1, // TODO: make configurable if needed
-                        'fiscal_delay_reason_type' => null,
-                        'fiscal_invoice_type_id' => 1, // TODO: make configurable if needed
-                        'fiscal_profile_id' => 1, // TODO: make configurable if needed
+                        'sales_date' => $invoice->invoice_date ? $invoice->invoice_date . (strlen($invoice->invoice_date) <= 10 ? ' 00:00' : '') : null,
+                        'invoice_number' => $invoice->number,
+                        'business_unit' => $invoice->business_unit,
+                        'issuer_tin' => $invoice->issuer_tin,
+                        'invoice_type' => $invoice->invoice_type,
+                        'is_e_invoice' => (bool)$invoice->is_e_invoice,
+                        'operator_code' => $invoice->operator_code,
+                        'software_code' => $invoice->software_code,
+                        'payment_method' => $invoice->payment_method,
+                        'total_amount' => (float)$invoice->total,
+                        'total_before_vat' => (float)$invoice->total_before_vat,
+                        'vat_amount' => (float)$invoice->vat_amount,
+                        'vat_rate' => (float)$invoice->vat_rate,
+                        'buyer_name' => $invoice->buyer_name,
+                        'buyer_address' => $invoice->buyer_address,
+                        'buyer_tax_number' => $invoice->buyer_tax_number,
                         'details' => $details,
                     ]
                 ],

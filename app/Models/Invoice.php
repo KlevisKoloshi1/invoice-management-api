@@ -12,6 +12,19 @@ class Invoice extends Model
         'created_by',
         'number',
         'invoice_date',
+        'business_unit',
+        'issuer_tin',
+        'invoice_type',
+        'is_e_invoice',
+        'operator_code',
+        'software_code',
+        'payment_method',
+        'total_before_vat',
+        'vat_amount',
+        'vat_rate',
+        'buyer_name',
+        'buyer_address',
+        'buyer_tax_number',
     ];
 
     public function client()

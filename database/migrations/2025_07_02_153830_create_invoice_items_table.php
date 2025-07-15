@@ -14,10 +14,18 @@ return new class extends Migration
         Schema::create('invoice_items', function (Blueprint $table) {
             $table->id();
             $table->foreignId('invoice_id')->constrained('invoices')->onDelete('cascade');
-            $table->string('description');
+            $table->string('description')->nullable();
+            $table->string('item_name', 100);
             $table->integer('quantity');
             $table->decimal('price', 12, 2);
             $table->decimal('total', 12, 2);
+            $table->string('unit')->nullable();
+            $table->decimal('vat_rate', 5, 2)->nullable();
+            $table->decimal('vat_amount', 12, 2)->nullable();
+            $table->string('currency', 10)->nullable();
+            $table->decimal('item_vat_rate', 5, 2)->nullable();
+            $table->decimal('item_total_before_vat', 12, 2)->nullable();
+            $table->decimal('item_vat_amount', 12, 2)->nullable();
             $table->timestamps();
         });
     }

@@ -32,6 +32,19 @@ return new class extends Migration
             $table->string('fiscalization_url')->nullable();
             $table->string('number')->nullable();
             $table->date('invoice_date')->nullable();
+            $table->string('business_unit', 20)->nullable();
+            $table->string('issuer_tin', 10)->nullable();
+            $table->string('invoice_type', 20)->nullable();
+            $table->boolean('is_e_invoice')->nullable();
+            $table->string('operator_code', 20)->nullable();
+            $table->string('software_code', 20)->nullable();
+            $table->string('payment_method', 30)->nullable();
+            $table->decimal('total_before_vat', 12, 2)->nullable();
+            $table->decimal('vat_amount', 12, 2)->nullable();
+            $table->decimal('vat_rate', 5, 2)->nullable();
+            $table->string('buyer_name', 100)->nullable();
+            $table->string('buyer_address', 200)->nullable();
+            $table->string('buyer_tax_number', 20)->nullable();
             $table->timestamps();
         });
     }

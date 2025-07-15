@@ -23,30 +23,55 @@ class ImportService implements ImportServiceInterface
      */
     protected function validateRequiredFields($sheet)
     {
-        $requiredFields = [
-            'nr:', 'date dokumenti', 'klienti:', 'emri:', 'nipt:',
-            'përshkrimi', 'njësia', 'sasia', 'cmimi', 'totali',
-            'vlefta pa tvsh', 'tvsh', 'vlefta me tvsh', 'përshkrim fature',
-            'shuma pa tvsh', 'shuma me tvsh', 'monedha'
+        // Map user-friendly and snake_case headers to internal field names
+        $headerAliases = [
+            'invoice_number' => ['invoice_number', 'Invoice Number'],
+            'invoice_date' => ['invoice_date', 'Invoice Date'],
+            'business_unit' => ['business_unit', 'Business Unit'],
+            'issuer_tin' => ['issuer_tin', 'Issuer TIN'],
+            'invoice_type' => ['invoice_type', 'Invoice Type'],
+            'is_e_invoice' => ['is_e_invoice', 'Is E-Invoice', 'Is EInvoice', 'Is E Invoice'],
+            'operator_code' => ['operator_code', 'Operator Code'],
+            'software_code' => ['software_code', 'Software Code'],
+            'payment_method' => ['payment_method', 'Payment Method'],
+            'total_amount' => ['total_amount', 'Total Amount'],
+            'total_before_vat' => ['total_before_vat', 'Total Before VAT'],
+            'vat_amount' => ['vat_amount', 'VAT Amount'],
+            'vat_rate' => ['vat_rate', 'VAT Rate'],
+            'buyer_name' => ['buyer_name', 'Buyer Name'],
+            'buyer_address' => ['buyer_address', 'Buyer Address'],
+            'buyer_tax_number' => ['buyer_tax_number', 'Buyer Tax Number'],
+            'item_name' => ['item_name', 'Item Name'],
+            'item_quantity' => ['item_quantity', 'Item Quantity'],
+            'item_price' => ['item_price', 'Item Price'],
+            'item_vat_rate' => ['item_vat_rate', 'Item VAT Rate'],
+            'item_total_before_vat' => ['item_total_before_vat', 'Item Total Before VAT'],
+            'item_vat_amount' => ['item_vat_amount', 'Item VAT Amount'],
         ];
+        $requiredFields = array_keys($headerAliases);
+        $headerRow = $sheet[0] ?? [];
+        // Normalize all header cells (lowercase, remove all Unicode whitespace, remove accents)
+        $normalize = function($str) {
+            $str = iconv('UTF-8', 'ASCII//TRANSLIT', $str);
+            $str = strtolower($str);
+            // Replace all dash-like Unicode characters with ASCII hyphen
+            $str = str_replace(['–', '—', '−', '‐', '‑', '‒', '–', '—', '―', '﹘', '﹣', '－'], '-', $str);
+            $str = preg_replace('/[\s\p{Zs}]+/u', '_', $str); // replace all whitespace with underscore
+            $str = preg_replace('/[^a-z0-9_]+/', '', $str); // remove all non-alphanumeric except underscore
+            return trim($str, '_');
+        };
+        $normalizedHeader = array_map($normalize, $headerRow);
         $foundFields = [];
-        $maxRows = 200; // Only scan first 200 rows for performance
-        foreach ($sheet as $rowIndex => $row) {
-            if ($rowIndex > $maxRows) break;
-            foreach ($row as $cell) {
-                $normalized = strtolower(trim(iconv('UTF-8', 'ASCII//TRANSLIT', $cell)));
-                $normalized = preg_replace('/\s+/', ' ', $normalized); // collapse spaces
-                foreach ($requiredFields as $field) {
-                    if (strpos($normalized, $field) !== false) {
-                        $foundFields[$field] = true;
-                    }
+        foreach ($headerAliases as $field => $aliases) {
+            foreach ($aliases as $alias) {
+                $normAlias = $normalize($alias);
+                if (in_array($normAlias, $normalizedHeader)) {
+                    $foundFields[] = $field;
+                    break;
                 }
             }
-            if (count($foundFields) === count($requiredFields)) {
-                break;
-            }
         }
-        $missing = array_diff($requiredFields, array_keys($foundFields));
+        $missing = array_diff($requiredFields, $foundFields);
         if (!empty($missing)) {
             throw new \Exception('The following required fields/headers are missing: ' . implode(', ', $missing));
         }
@@ -93,87 +118,41 @@ class ImportService implements ImportServiceInterface
             $sheet = $rows[0] ?? [];
             // PRE-VALIDATE required fields/headers before any parsing
             $this->validateRequiredFields($sheet);
-            $header = array_map('strtolower', $sheet[0]);
-            $expected = ['client_name','client_email','client_address','client_phone','invoice_total','invoice_status','item_description','item_quantity','item_price','item_total'];
-            $isFlatTable = ($header === $expected);
-            // Even more robust detection: scan all cells for 'persh' (partial match, case-insensitive, trimmed)
-            $isCustomReport = false;
-            $headerRowIdx = null;
-            $colMap = [];
-            $required = [
-                'pershkrimi' => null,
-                'njesia' => null,
-                'sasia' => null,
-                'cmimi' => null
-            ];
-            $maxHeaderRows = 30;
-            // Try to detect and combine multi-row headers (e.g., rows 5 and 6)
-            $combinedHeader = null;
-            for ($i = 0; $i < min($maxHeaderRows - 1, count($sheet) - 1); $i++) {
-                $rowA = $sheet[$i];
-                $rowB = $sheet[$i + 1];
-                // Heuristic: if rowA contains 'Sasia' or 'Cmimi' and rowB contains 'Pershkrimi' or 'Njesia'
-                $rowAString = strtolower(implode(' ', $rowA));
-                $rowBString = strtolower(implode(' ', $rowB));
-                if ((strpos($rowAString, 'sasia') !== false || strpos($rowAString, 'cmimi') !== false)
-                    && (strpos($rowBString, 'pershkrim') !== false || strpos($rowBString, 'njesia') !== false)) {
-                    // Combine the two rows
-                    $combinedHeader = [];
-                    $len = max(count($rowA), count($rowB));
-                    for ($j = 0; $j < $len; $j++) {
-                        $cellA = isset($rowA[$j]) ? trim($rowA[$j]) : '';
-                        $cellB = isset($rowB[$j]) ? trim($rowB[$j]) : '';
-                        $combinedHeader[] = $cellB ?: $cellA;
-                    }
-                    $headerRowIdx = $i + 1;
-                    \Log::info('Combined multi-row header detected', ['rowA' => $rowA, 'rowB' => $rowB, 'combined' => $combinedHeader]);
-                    break;
-                }
+            // Build header map from first row using normalized snake_case header names
+            $headerRow = $sheet[0];
+            $headerMap = [];
+            foreach ($headerRow as $idx => $cell) {
+                $normalized = strtolower(trim(preg_replace('/[^a-z0-9]+/', '_', iconv('UTF-8', 'ASCII//TRANSLIT', $cell))));
+                $normalized = trim($normalized, '_');
+                $headerMap[$normalized] = $idx;
             }
-            // Use combined header if found, else fallback to previous logic
-            if ($combinedHeader) {
-                $normRow = array_map($normalize_header, $combinedHeader);
-                $tmpMap = [];
-                foreach (['pershkrimi', 'njesia', 'sasia', 'cmimi'] as $req) {
-                    foreach ($normRow as $idx => $cell) {
-                        if (strpos($cell, $req) !== false) {
-                            $tmpMap[$req] = $idx;
-                            break;
-                        }
-                    }
-                }
-                if (count($tmpMap) === 4) {
-                    $colMap = $tmpMap;
-                    \Log::info('Column mapping from combined header', ['colMap' => $colMap, 'header' => $combinedHeader]);
-                } else {
-                    \Log::error('Could not map all required columns from combined header', ['header' => $combinedHeader]);
-                    throw new \Exception('Could not find a valid header row with required columns.');
-                }
-            } else {
-                // Scan first $maxHeaderRows rows for a header row containing all required columns
-                for ($row = 0; $row < min($maxHeaderRows, count($sheet)); $row++) {
-                    $normRow = array_map($normalize_header, $sheet[$row]);
-                    $tmpMap = [];
-                    foreach (array_keys($required) as $req) {
-                        foreach ($normRow as $idx => $cell) {
-                            if (strpos($cell, $req) !== false) {
-                                $tmpMap[$req] = $idx;
-                                break;
-                            }
-                        }
-                    }
-                    if (count($tmpMap) === count($required)) {
-                        $headerRowIdx = $row;
-                        $colMap = $tmpMap;
-                        \Log::info('Detected header row for import', ['row' => $row, 'colMap' => $colMap, 'header' => $sheet[$row]]);
-                        break;
-                    }
-                }
-                if ($headerRowIdx === null || count($colMap) < 4) {
-                    // Log the first 10 rows for debugging
-                    \Log::error('Could not find a valid header row. First 10 rows:', array_slice($sheet, 0, 10));
-                    throw new \Exception('Could not find a valid header row with required columns.');
-                }
+            $expected = ['client_name','client_email','client_address','client_phone','invoice_total','invoice_status','item_description','item_quantity','item_price','item_total'];
+            // Add support for new fiscalization header set
+            $expectedFiscalization = [
+                'invoice_number','invoice_date','business_unit','issuer_tin','invoice_type','is_e_invoice','operator_code','software_code','payment_method','total_amount','total_before_vat','vat_amount','vat_rate','buyer_name','buyer_address','buyer_tax_number','item_name','item_quantity','item_price','item_vat_rate','item_total_before_vat','item_vat_amount','unit'
+            ];
+            $normalize = function($str) {
+                $str = iconv('UTF-8', 'ASCII//TRANSLIT', $str);
+                $str = strtolower($str);
+                // Replace all dash-like Unicode characters with ASCII hyphen
+                $str = str_replace(['–', '—', '−', '‐', '‑', '‒', '–', '—', '―', '﹘', '﹣', '－'], '-', $str);
+                $str = preg_replace('/[\s\p{Zs}]+/u', '_', $str); // replace all whitespace with underscore
+                $str = preg_replace('/[^a-z0-9_]+/', '', $str); // remove all non-alphanumeric except underscore
+                return trim($str, '_');
+            };
+            $normalizedHeaderRow = array_map($normalize, $headerRow);
+            \Log::info('DEBUG: Raw header row', ['headerRow' => $headerRow]);
+            \Log::info('DEBUG: Normalized header row', ['normalizedHeaderRow' => $normalizedHeaderRow]);
+            \Log::info('DEBUG: Expected fiscalization headers', ['expectedFiscalization' => $expectedFiscalization]);
+            // Allow 'unit' to be optional
+            $expectedFiscalizationOptionalUnit = $expectedFiscalization;
+            array_pop($expectedFiscalizationOptionalUnit); // remove 'unit'
+            // Check if all required columns are present (order-insensitive, allow extra columns)
+            $missing = array_diff($expectedFiscalizationOptionalUnit, $normalizedHeaderRow);
+            \Log::info('DEBUG: Missing columns', ['missing' => $missing]);
+            $isFlatTable = empty($missing);
+            if (!$isFlatTable) {
+                throw new \Exception('Could not find a valid header row with required columns. Missing: ' . implode(', ', $missing));
             }
             foreach ($rows as $sheetData) {
                 foreach ($sheetData as $row) {
@@ -197,64 +176,132 @@ class ImportService implements ImportServiceInterface
                 for ($i = 1; $i < count($sheet); $i++) {
                     $row = $sheet[$i];
                     $rowNum = $i + 1;
-                    // Example: Assume extra columns for number, date, tin (customize as needed)
-                    $invoiceNumber = $row[10] ?? null; // Adjust index if needed
-                    $invoiceDate = $row[11] ?? null;
-                    $clientTIN = $row[12] ?? null;
-                    // Validate required fields
-                    if (
-                        empty($row[0]) || empty($row[1]) || empty($row[4]) || empty($row[6]) || empty($row[7]) || empty($row[8])
-                    ) {
-                        $errors[] = "Row $rowNum: Missing required fields.";
+                    // Skip empty or malformed rows
+                    if (!is_array($row) || count(array_filter($row, fn($v) => $v !== null && $v !== '')) === 0) {
                         continue;
                     }
-                    $clientEmail = $row[1];
-                    if (isset($clientCache[$clientEmail])) {
-                        $client = $clientCache[$clientEmail];
+                    // Build associative array for the row using headerMap
+                    $data = [];
+                    foreach ($headerMap as $key => $idx) {
+                        $data[$key] = isset($row[$idx]) ? $row[$idx] : null;
+                    }
+                    // Log the data row before validation
+                    \Log::info('DEBUG: Processing data row', ['rowNum' => $rowNum, 'row' => $row, 'data' => $data]);
+                    // Extract all required fields from $data
+                    $invoice_number = $data['invoice_number'] ?? null;
+                    $invoice_date = $data['invoice_date'] ?? null;
+                    $business_unit = $data['business_unit'] ?? null;
+                    $issuer_tin = $data['issuer_tin'] ?? null;
+                    $invoice_type = $data['invoice_type'] ?? null;
+                    $is_e_invoice = $data['is_e_invoice'] ?? null;
+                    $operator_code = $data['operator_code'] ?? null;
+                    $software_code = $data['software_code'] ?? null;
+                    $payment_method = $data['payment_method'] ?? null;
+                    $total_amount = $data['total_amount'] ?? null;
+                    $total_before_vat = $data['total_before_vat'] ?? null;
+                    $vat_amount = $data['vat_amount'] ?? null;
+                    $vat_rate = $data['vat_rate'] ?? null;
+                    $buyer_name = $data['buyer_name'] ?? null;
+                    $buyer_address = $data['buyer_address'] ?? null;
+                    $buyer_tax_number = $data['buyer_tax_number'] ?? null;
+                    $item_name = $data['item_name'] ?? null;
+                    $item_quantity = $data['item_quantity'] ?? null;
+                    $item_price = $data['item_price'] ?? null;
+                    $item_vat_rate = $data['item_vat_rate'] ?? null;
+                    $item_total_before_vat = $data['item_total_before_vat'] ?? null;
+                    $item_vat_amount = $data['item_vat_amount'] ?? null;
+                    // Normalize boolean-like and enum fields before validation
+                    if (is_string($is_e_invoice)) {
+                        $val = strtolower(trim($is_e_invoice));
+                        if (in_array($val, ['yes', 'true', '1'])) $is_e_invoice = true;
+                        elseif (in_array($val, ['no', 'false', '0'])) $is_e_invoice = false;
+                    }
+                    if (is_string($invoice_type)) {
+                        $invoice_type = trim($invoice_type);
+                        if (strtolower($invoice_type) === 'cash invoice') $invoice_type = 'Cash Invoice';
+                        elseif (strtolower($invoice_type) === 'electronic') $invoice_type = 'Electronic';
+                    }
+                    if (is_string($payment_method)) {
+                        $pm = strtolower(trim($payment_method));
+                        if ($pm === 'banknotes and coins') $payment_method = 'Banknotes and coins';
+                        elseif ($pm === 'card payment') $payment_method = 'Card Payment';
+                        elseif ($pm === 'bank transfer') $payment_method = 'Bank Transfer';
+                    }
+                    // Validation rules (example, should be moved to a validator class)
+                    $errorsForRow = [];
+                    if (empty($invoice_number)) $errorsForRow[] = 'invoice_number required';
+                    if (empty($invoice_date) || !\DateTime::createFromFormat('d/m/Y H:i', $invoice_date)) $errorsForRow[] = 'invoice_date required or invalid format';
+                    if (empty($business_unit)) $errorsForRow[] = 'business_unit required';
+                    if (empty($issuer_tin) || strlen($issuer_tin) !== 10) $errorsForRow[] = 'issuer_tin required or invalid';
+                    if (empty($invoice_type) || !in_array($invoice_type, ['Cash Invoice', 'Electronic'])) $errorsForRow[] = 'invoice_type required or invalid';
+                    if (!in_array($is_e_invoice, ['0', '1', 'true', 'false', 0, 1, true, false], true)) $errorsForRow[] = 'is_e_invoice required or invalid';
+                    if (empty($operator_code)) $errorsForRow[] = 'operator_code required';
+                    if (empty($software_code)) $errorsForRow[] = 'software_code required';
+                    if (empty($payment_method) || !in_array($payment_method, ['Banknotes and coins', 'Card Payment', 'Bank Transfer'])) $errorsForRow[] = 'payment_method required or invalid';
+                    if (!is_numeric($total_amount) || $total_amount < 0) $errorsForRow[] = 'total_amount required or invalid';
+                    if (!is_numeric($total_before_vat) || $total_before_vat < 0) $errorsForRow[] = 'total_before_vat required or invalid';
+                    if (!is_numeric($vat_amount) || $vat_amount < 0) $errorsForRow[] = 'vat_amount required or invalid';
+                    if (!in_array($vat_rate, ['0', '5.5', '20', 0, 5.5, 20], true)) $errorsForRow[] = 'vat_rate required or invalid';
+                    if (!empty($buyer_tax_number) && $buyer_tax_number !== 'SKA' && strlen($buyer_tax_number) > 20) $errorsForRow[] = 'buyer_tax_number invalid';
+                    if (empty($item_name)) $errorsForRow[] = 'item_name required';
+                    if (!is_numeric($item_quantity) || $item_quantity < 0.01) $errorsForRow[] = 'item_quantity required or invalid';
+                    if (!is_numeric($item_price) || $item_price < 0) $errorsForRow[] = 'item_price required or invalid';
+                    if (!in_array($item_vat_rate, ['0', '5.5', '20', 0, 5.5, 20], true)) $errorsForRow[] = 'item_vat_rate required or invalid';
+                    if (!is_numeric($item_total_before_vat) || $item_total_before_vat < 0) $errorsForRow[] = 'item_total_before_vat required or invalid';
+                    if (!is_numeric($item_vat_amount) || $item_vat_amount < 0) $errorsForRow[] = 'item_vat_amount required or invalid';
+                    // VAT calculation check
+                    if (abs(($total_before_vat + $vat_amount) - $total_amount) > 0.01) $errorsForRow[] = 'VAT calculation mismatch (invoice)';
+                    if (abs(($item_total_before_vat + $item_vat_amount) - ($item_price * $item_quantity)) > 0.01) $errorsForRow[] = 'VAT calculation mismatch (item)';
+                    if (!empty($errorsForRow)) {
+                        $errors[] = "Row $rowNum: " . implode('; ', $errorsForRow);
+                        continue;
+                    }
+                    // Create or get client
+                    if (isset($clientCache[$issuer_tin])) {
+                        $client = $clientCache[$issuer_tin];
                     } else {
-                        $client = Client::where('email', $clientEmail)->first();
+                        $client = Client::where('email', $issuer_tin . '@example.com')->first();
                         if (!$client) {
                             $client = Client::create([
-                                'email' => $clientEmail,
-                                'name' => $row[0],
-                                'address' => $row[2] ?? null,
-                                'phone' => $row[3] ?? null,
-                                'tin' => $clientTIN,
+                                'email' => $issuer_tin . '@example.com',
+                                'name' => $buyer_name,
+                                'tin' => $issuer_tin,
                             ]);
-                        } else if ($clientTIN && $client->tin !== $clientTIN) {
-                            $client->tin = $clientTIN;
-                            $client->save();
                         }
-                        $clientCache[$clientEmail] = $client;
+                        $clientCache[$issuer_tin] = $client;
                     }
-                    // Group by invoice (client_email + total + status + number + date)
-                    $invoiceKey = $client->id . '|' . $row[4] . '|' . ($row[5] ?? 'pending') . '|' . $invoiceNumber . '|' . $invoiceDate;
+                    // Group by invoice (client_code + invoice_number + invoice_date)
+                    $invoiceKey = $client->id . '|' . $invoice_number . '|' . $invoice_date;
                     if (!isset($invoiceMap[$invoiceKey])) {
                         $invoice = Invoice::create([
                             'client_id' => $client->id,
-                            'total' => $row[4],
-                            'status' => $row[5] ?? 'pending',
+                            'total' => $total_amount,
+                            'status' => 'pending',
                             'created_by' => $userId,
-                            'number' => $invoiceNumber,
-                            'invoice_date' => $invoiceDate,
+                            'number' => $invoice_number,
+                            'invoice_date' => $invoice_date,
                         ]);
                         $invoiceMap[$invoiceKey] = $invoice;
                         $createdInvoiceIds[] = $invoice->id;
                         $invoiceItemsMap[$invoiceKey] = [];
                         $invoiceMeta[$invoiceKey] = [
-                            'number' => $invoiceNumber,
-                            'date' => $invoiceDate,
-                            'client_tin' => $clientTIN,
+                            'number' => $invoice_number,
+                            'date' => $invoice_date,
+                            'client_tin' => $issuer_tin,
                         ];
                     } else {
                         $invoice = $invoiceMap[$invoiceKey];
                     }
                     // Collect item data for this invoice
                     $invoiceItemsMap[$invoiceKey][] = [
-                        'description' => $row[6],
-                        'quantity' => $row[7],
-                        'price' => $row[8],
-                        'total' => $row[9] ?? ($row[7] * $row[8]),
+                        'description' => $item_name,
+                        'quantity' => $item_quantity,
+                        'price' => $item_price,
+                        'total' => $item_amount,
+                        'unit' => $business_unit,
+                        'vat_rate' => $item_vat_rate,
+                        'vat_amount' => $item_vat_amount,
+                        'currency' => $payment_method,
                     ];
                 }
                 // Now, create items and fiscalize for each invoice
