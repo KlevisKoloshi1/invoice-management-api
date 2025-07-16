@@ -118,31 +118,27 @@ class ImportService implements ImportServiceInterface
             $sheet = $rows[0] ?? [];
             // PRE-VALIDATE required fields/headers before any parsing
             $this->validateRequiredFields($sheet);
-            // Build header map from first row using normalized snake_case header names
+            // Always treat the first row as the header row (A1, B1, ..., W1)
             $headerRow = $sheet[0];
-            $headerMap = [];
-            foreach ($headerRow as $idx => $cell) {
-                $normalized = strtolower(trim(preg_replace('/[^a-z0-9]+/', '_', iconv('UTF-8', 'ASCII//TRANSLIT', $cell))));
-                $normalized = trim($normalized, '_');
-                $headerMap[$normalized] = $idx;
-            }
-            $expected = ['client_name','client_email','client_address','client_phone','invoice_total','invoice_status','item_description','item_quantity','item_price','item_total'];
-            // Add support for new fiscalization header set
-            $expectedFiscalization = [
-                'invoice_number','invoice_date','business_unit','issuer_tin','invoice_type','is_e_invoice','operator_code','software_code','payment_method','total_amount','total_before_vat','vat_amount','vat_rate','buyer_name','buyer_address','buyer_tax_number','item_name','item_quantity','item_price','item_vat_rate','item_total_before_vat','item_vat_amount','unit'
-            ];
             $normalize = function($str) {
                 $str = iconv('UTF-8', 'ASCII//TRANSLIT', $str);
                 $str = strtolower($str);
-                // Replace all dash-like Unicode characters with ASCII hyphen
                 $str = str_replace(['–', '—', '−', '‐', '‑', '‒', '–', '—', '―', '﹘', '﹣', '－'], '-', $str);
                 $str = preg_replace('/[\s\p{Zs}]+/u', '_', $str); // replace all whitespace with underscore
                 $str = preg_replace('/[^a-z0-9_]+/', '', $str); // remove all non-alphanumeric except underscore
                 return trim($str, '_');
             };
+            $headerMap = [];
+            foreach ($headerRow as $idx => $cell) {
+                $normalized = $normalize($cell);
+                $headerMap[$normalized] = $idx;
+            }
+            \Log::info('DEBUG: Header map', ['headerMap' => $headerMap]);
             $normalizedHeaderRow = array_map($normalize, $headerRow);
-            \Log::info('DEBUG: Raw header row', ['headerRow' => $headerRow]);
-            \Log::info('DEBUG: Normalized header row', ['normalizedHeaderRow' => $normalizedHeaderRow]);
+            // Add support for new fiscalization header set
+            $expectedFiscalization = [
+                'invoice_number','invoice_date','business_unit','issuer_tin','invoice_type','is_e_invoice','operator_code','software_code','payment_method','total_amount','total_before_vat','vat_amount','vat_rate','buyer_name','buyer_address','buyer_tax_number','item_name','item_quantity','item_price','item_vat_rate','item_total_before_vat','item_vat_amount','unit'
+            ];
             \Log::info('DEBUG: Expected fiscalization headers', ['expectedFiscalization' => $expectedFiscalization]);
             // Allow 'unit' to be optional
             $expectedFiscalizationOptionalUnit = $expectedFiscalization;
@@ -176,20 +172,29 @@ class ImportService implements ImportServiceInterface
                 for ($i = 1; $i < count($sheet); $i++) {
                     $row = $sheet[$i];
                     $rowNum = $i + 1;
-                    // Skip empty or malformed rows
-                    if (!is_array($row) || count(array_filter($row, fn($v) => $v !== null && $v !== '')) === 0) {
+                    // Skip empty or malformed rows (all cells empty or whitespace)
+                    if (!is_array($row) || count(array_filter($row, function($v) {
+                        return $v !== null && trim((string)$v) !== '';
+                    })) === 0) {
                         continue;
                     }
                     // Build associative array for the row using headerMap
                     $data = [];
                     foreach ($headerMap as $key => $idx) {
-                        $data[$key] = isset($row[$idx]) ? $row[$idx] : null;
+                        $data[$key] = array_key_exists($idx, $row) ? $row[$idx] : null;
                     }
-                    // Log the data row before validation
-                    \Log::info('DEBUG: Processing data row', ['rowNum' => $rowNum, 'row' => $row, 'data' => $data]);
+                    \Log::info('DEBUG: Data mapping', ['rowNum' => $rowNum, 'data' => $data]);
                     // Extract all required fields from $data
                     $invoice_number = $data['invoice_number'] ?? null;
                     $invoice_date = $data['invoice_date'] ?? null;
+                    // Convert 'd/m/Y H:i' to 'Y-m-d H:i:s' for DB
+                    $invoice_date_db = null;
+                    if (!empty($invoice_date)) {
+                        $dt = \DateTime::createFromFormat('d/m/Y H:i', $invoice_date);
+                        if ($dt) {
+                            $invoice_date_db = $dt->format('Y-m-d H:i:s');
+                        }
+                    }
                     $business_unit = $data['business_unit'] ?? null;
                     $issuer_tin = $data['issuer_tin'] ?? null;
                     $invoice_type = $data['invoice_type'] ?? null;
@@ -279,7 +284,7 @@ class ImportService implements ImportServiceInterface
                             'status' => 'pending',
                             'created_by' => $userId,
                             'number' => $invoice_number,
-                            'invoice_date' => $invoice_date,
+                            'invoice_date' => $invoice_date_db,
                         ]);
                         $invoiceMap[$invoiceKey] = $invoice;
                         $createdInvoiceIds[] = $invoice->id;
@@ -297,8 +302,8 @@ class ImportService implements ImportServiceInterface
                         'description' => $item_name,
                         'quantity' => $item_quantity,
                         'price' => $item_price,
-                        'total' => $item_amount,
-                        'unit' => $business_unit,
+                        'total' => $item_total_before_vat + $item_vat_amount,
+                        'unit' => $data['unit'] ?? null,
                         'vat_rate' => $item_vat_rate,
                         'vat_amount' => $item_vat_amount,
                         'currency' => $payment_method,
@@ -329,11 +334,17 @@ class ImportService implements ImportServiceInterface
                             'total' => $invoice->total,
                             'fiscalization_url' => $verificationUrl,
                         ];
+                        \Log::info('DEBUG: Fiscalized invoice', ['invoice_id' => $invoice->id, 'url' => $verificationUrl]);
                     } catch (\Exception $e) {
                         $errors[] = "Fiscalization failed for invoice ID {$invoice->id}: " . $e->getMessage();
                     }
                 }
-                $import->status = 'completed';
+                // Set import status based on errors
+                if (!empty($errors)) {
+                    $import->status = 'failed';
+                } else {
+                    $import->status = 'completed';
+                }
                 $import->save();
             } else {
                 // Always attempt custom report parsing if not a flat table
