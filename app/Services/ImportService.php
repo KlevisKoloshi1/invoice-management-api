@@ -293,6 +293,20 @@ class ImportService implements ImportServiceInterface
                             'number' => $invoice_number,
                             'date' => $invoice_date,
                             'client_tin' => $issuer_tin,
+                            'business_unit' => $business_unit,
+                            'issuer_tin' => $issuer_tin,
+                            'invoice_type' => $invoice_type,
+                            'is_e_invoice' => $is_e_invoice,
+                            'operator_code' => $operator_code,
+                            'software_code' => $software_code,
+                            'payment_method' => $payment_method,
+                            'total_amount' => $total_amount,
+                            'total_before_vat' => $total_before_vat,
+                            'vat_amount' => $vat_amount,
+                            'vat_rate' => $vat_rate,
+                            'buyer_name' => $buyer_name,
+                            'buyer_address' => $buyer_address,
+                            'buyer_tax_number' => $buyer_tax_number,
                         ];
                     } else {
                         $invoice = $invoiceMap[$invoiceKey];
@@ -300,6 +314,7 @@ class ImportService implements ImportServiceInterface
                     // Collect item data for this invoice
                     $invoiceItemsMap[$invoiceKey][] = [
                         'description' => $item_name,
+                        'item_name' => $item_name,
                         'quantity' => $item_quantity,
                         'price' => $item_price,
                         'total' => $item_total_before_vat + $item_vat_amount,

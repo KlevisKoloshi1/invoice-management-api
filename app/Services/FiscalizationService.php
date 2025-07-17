@@ -21,6 +21,36 @@ class FiscalizationService
     public function fiscalize(Invoice $invoice, $meta = [])
     {
         try {
+            // LOGIN STEP: Get token from /login.php
+            $loginPayload = [
+                'body' => [
+                    'username' => $this->config['username'],
+                    'password' => $this->config['password'],
+                ]
+            ];
+            // Use a Guzzle cookie jar to persist cookies between login and sales
+            $jar = new \GuzzleHttp\Cookie\CookieJar();
+            $loginResponse = $this->client->post($this->config['url'] . '/login.php', [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'App' => 'web',
+                ],
+                'json' => $loginPayload,
+                'cookies' => $jar,
+            ]);
+            $loginBody = json_decode($loginResponse->getBody()->getContents(), true);
+            \Log::info('Fiscalization login response', ['loginBody' => $loginBody]);
+            $loginUser = $loginBody['body'][0] ?? [];
+            $token = $loginUser['token'] ?? null;
+            if (!$token) {
+                \Log::error('Fiscalization login failed: No token received', ['loginBody' => $loginBody]);
+                $invoice->fiscalized = false;
+                $invoice->fiscalization_status = 'failed';
+                $invoice->fiscalization_response = 'Login failed: No token received.';
+                $invoice->save();
+                return null;
+            }
+
             // Fetch invoice items
             $items = $invoice->items()->get();
             $details = [];
@@ -67,58 +97,58 @@ class FiscalizationService
             $invoiceDate = $meta['date'] ?? $invoice->invoice_date ?? ($invoice->created_at ? $invoice->created_at->format('Y-m-d') : now()->format('Y-m-d'));
             $clientTIN = $meta['client_tin'] ?? $invoice->client->tin ?? null;
 
-            // Build payload as per Elif API docs
+            // Build payload as per Elif API docs, with token, user_id, and username inside the invoice body
             $payload = [
                 'body' => [
-                    [
+                    array_merge([
                         'cmd' => 'insert',
-                        'sales_date' => $invoice->invoice_date ? $invoice->invoice_date . (strlen($invoice->invoice_date) <= 10 ? ' 00:00' : '') : null,
-                        'invoice_number' => $invoice->number,
-                        'business_unit' => $invoice->business_unit,
-                        'issuer_tin' => $invoice->issuer_tin,
-                        'invoice_type' => $invoice->invoice_type,
-                        'is_e_invoice' => (bool)$invoice->is_e_invoice,
-                        'operator_code' => $invoice->operator_code,
-                        'software_code' => $invoice->software_code,
-                        'payment_method' => $invoice->payment_method,
-                        'total_amount' => (float)$invoice->total,
-                        'total_before_vat' => (float)$invoice->total_before_vat,
-                        'vat_amount' => (float)$invoice->vat_amount,
-                        'vat_rate' => (float)$invoice->vat_rate,
-                        'buyer_name' => $invoice->buyer_name,
-                        'buyer_address' => $invoice->buyer_address,
-                        'buyer_tax_number' => $invoice->buyer_tax_number,
+                        'sales_date' => $invoiceDate ? (strlen($invoiceDate) <= 10 ? $invoiceDate . ' 00:00' : $invoiceDate) : null,
+                        'invoice_number' => $invoiceNumber,
+                        'business_unit' => $meta['business_unit'] ?? $invoice->business_unit ?? null,
+                        'issuer_tin' => $meta['issuer_tin'] ?? $invoice->issuer_tin ?? null,
+                        'invoice_type' => $meta['invoice_type'] ?? $invoice->invoice_type ?? null,
+                        'is_e_invoice' => isset($meta['is_e_invoice']) ? (bool)$meta['is_e_invoice'] : (bool)$invoice->is_e_invoice,
+                        'operator_code' => $meta['operator_code'] ?? $invoice->operator_code ?? null,
+                        'software_code' => $meta['software_code'] ?? $invoice->software_code ?? null,
+                        'payment_method' => $meta['payment_method'] ?? $invoice->payment_method ?? null,
+                        'total_amount' => isset($meta['total_amount']) ? (float)$meta['total_amount'] : (float)$invoice->total,
+                        'total_before_vat' => isset($meta['total_before_vat']) ? (float)$meta['total_before_vat'] : (float)$invoice->total_before_vat,
+                        'vat_amount' => isset($meta['vat_amount']) ? (float)$meta['vat_amount'] : (float)$invoice->vat_amount,
+                        'vat_rate' => isset($meta['vat_rate']) ? (float)$meta['vat_rate'] : (float)$invoice->vat_rate,
+                        'buyer_name' => $meta['buyer_name'] ?? $invoice->buyer_name ?? null,
+                        'buyer_address' => $meta['buyer_address'] ?? $invoice->buyer_address ?? null,
+                        'buyer_tax_number' => $meta['buyer_tax_number'] ?? $invoice->buyer_tax_number ?? null,
                         'details' => $details,
-                    ]
+                    ], [
+                        'token' => $token,
+                        'user_id' => $loginUser['user_id'] ?? null,
+                        'username' => $loginUser['username'] ?? null,
+                    ])
                 ],
                 'IsEncrypted' => false,
                 'ServerConfig' => json_encode($serverConfig),
                 'App' => 'web',
                 'Language' => 'sq-AL',
             ];
-
-            // Log the full payload including details
-            \Log::info('Fiscalization request for invoice ' . $invoice->id, ['payload' => $payload]);
-
+            // Only use standard headers, no token headers
+            $headers = [
+                'Content-Type' => 'application/json',
+                'App' => 'web',
+            ];
+            \Log::info('Fiscalization sales.php payload', ['headers' => $headers, 'payload' => $payload]);
             $response = $this->client->post($this->config['url'] . '/sales.php', [
-                'headers' => [
-                    'Content-Type' => 'application/json',
-                    'App' => 'web',
-                ],
-                'json' => $payload
+                'headers' => $headers,
+                'json' => $payload,
+                'cookies' => $jar,
             ]);
-
             $responseBody = json_decode($response->getBody()->getContents(), true);
             \Log::info('Fiscalization response for invoice ' . $invoice->id, ['response' => $responseBody]);
-
-            $invoice->fiscalization_response = json_encode($responseBody);
-            // Handle status codes and qrcode_url as per API docs
-            if (isset($responseBody['status']['code']) && $responseBody['status']['code'] == 600 && isset($responseBody['qrcode_url']) && $responseBody['qrcode_url']) {
+            if (isset($responseBody['status']['code']) && $responseBody['status']['code'] == 600) {
+                $invoice->fiscalization_response = json_encode($responseBody);
                 $invoice->fiscalized = true;
                 $invoice->fiscalization_status = 'success';
-                $invoice->fiscalization_url = $responseBody['qrcode_url'];
+                $invoice->fiscalization_url = $responseBody['qrcode_url'] ?? null;
                 $invoice->fiscalized_at = now();
-                // Save all required fields for verification URL
                 $invoice->iic = $responseBody['iic'] ?? null;
                 $invoice->tin = $responseBody['tin'] ?? $clientTIN ?? null;
                 $invoice->crtd = $responseBody['crtd'] ?? ($invoiceDate ? $invoiceDate . 'T00:00:00+01:00' : null);
@@ -127,16 +157,14 @@ class FiscalizationService
                 $invoice->cr = $responseBody['cr'] ?? null;
                 $invoice->sw = $responseBody['sw'] ?? null;
                 $invoice->prc = $responseBody['prc'] ?? $invoice->total ?? null;
+                $invoice->save();
+                return $this->generateVerificationUrl($invoice);
             } else {
                 $invoice->fiscalized = false;
                 $invoice->fiscalization_status = 'failed';
                 $errorMsg = isset($responseBody['status']['message']) ? $responseBody['status']['message'] : (isset($responseBody['error']) ? $responseBody['error'] : 'Unknown error');
                 $invoice->fiscalization_response = $errorMsg;
-            }
-            $invoice->save();
-            // Return the verification URL if fiscalized
-            if ($invoice->fiscalized) {
-                return $this->generateVerificationUrl($invoice);
+                $invoice->save();
             }
             return null;
         } catch (\Exception $e) {

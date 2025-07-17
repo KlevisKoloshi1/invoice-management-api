@@ -36,13 +36,14 @@ return [
     ],
 
     'fiscalization' => [
-        'url' => 'https://elif12.2rmlab.com/live/api',
+        'url' => env('FISCALIZATION_URL', 'https://elif12.2rmlab.com/live/api'),
         'db_config' => env('FISCALIZATION_DB_CONFIG', 'elif_config'),
         'company_db_name' => env('FISCALIZATION_COMPANY_DB_NAME', ''),
         'hardware_id' => env('FISCALIZATION_HARDWARE_ID', ''),
         'user_token' => env('FISCALIZATION_USER_TOKEN', ''),
         'user_id' => env('FISCALIZATION_USER_ID', ''),
         'username' => env('FISCALIZATION_USERNAME', ''),
+        'password' => env('FISCALIZATION_PASSWORD', ''),
     ],
 
 ];
