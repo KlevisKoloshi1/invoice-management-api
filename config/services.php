@@ -44,6 +44,14 @@ return [
         'user_id' => env('FISCALIZATION_USER_ID', ''),
         'username' => env('FISCALIZATION_USERNAME', ''),
         'password' => env('FISCALIZATION_PASSWORD', ''),
+        // Default values for fiscalization API required fields
+        'default_city_id' => env('FISCALIZATION_DEFAULT_CITY_ID', 1),
+        'default_warehouse_id' => env('FISCALIZATION_DEFAULT_WAREHOUSE_ID', 1),
+        'default_automatic_payment_method_id' => env('FISCALIZATION_DEFAULT_AUTOMATIC_PAYMENT_METHOD_ID', 0),
+        'default_currency_id' => env('FISCALIZATION_DEFAULT_CURRENCY_ID', 1),
+        'default_cash_register_id' => env('FISCALIZATION_DEFAULT_CASH_REGISTER_ID', 1),
+        'default_fiscal_invoice_type_id' => env('FISCALIZATION_DEFAULT_FISCAL_INVOICE_TYPE_ID', 4),
+        'default_fiscal_profile_id' => env('FISCALIZATION_DEFAULT_FISCAL_PROFILE_ID', 1),
     ],
 
 ];

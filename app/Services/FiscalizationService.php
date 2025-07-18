@@ -56,14 +56,24 @@ class FiscalizationService
             $details = [];
             foreach ($items as $item) {
                 $details[] = [
-                    'item_code' => (string)($item->id),
-                    'item_name' => (string)($item->item_name ?? $item->description ?? 'Unknown'),
-                    'item_quantity' => (float)$item->quantity,
-                    'item_price' => (float)$item->price,
-                    'item_total_before_vat' => (float)($item->item_total_before_vat ?? 0),
-                    'item_vat_amount' => (float)($item->item_vat_amount ?? 0),
-                    'item_vat_rate' => (float)($item->item_vat_rate ?? $item->vat_rate ?? 0),
-                    'unit' => isset($item->unit) ? (string)$item->unit : 'pcs',
+                    'sales_invoice_header_id' => null,
+                    'sales_invoice_detail_id' => null,
+                    'item_code' => $item->item_id ?? null,
+                    'item_name' => $item->item_name ?? null,
+                    'item_barcode' => null,
+                    'item_total_with_tax_reporting_currency' => $item->item_total_with_tax ?? null,
+                    'item_type_id' => $item->item_type_id ?? 1,
+                    'item_price_without_tax' => $item->item_price_without_tax ?? null,
+                    'item_price_with_tax' => $item->item_price_with_tax ?? null,
+                    'item_sales_tax_percentage' => $item->item_sales_tax_percentage ?? null,
+                    'item_total_without_tax' => $item->item_total_without_tax ?? null,
+                    'item_quantity' => $item->quantity ?? null,
+                    'item_total_with_tax' => $item->item_total_with_tax ?? null,
+                    'item_total_tax' => $item->item_total_tax ?? null,
+                    'item_unit_id' => $item->item_unit_id ?? null,
+                    'tax_rate_id' => $item->tax_rate_id ?? null,
+                    'item_id' => $item->item_id ?? null,
+                    'cmd' => 'insert',
                 ];
             }
 
@@ -90,46 +100,75 @@ class FiscalizationService
                 'Url_API' => $this->config['url'],
                 'DB_Config' => $this->config['db_config'],
                 'Company_DB_Name' => $this->config['company_db_name'],
+                'HardwareId' => $this->config['hardware_id'] ?? '',
+                'UserInfo' => [
+                    'user_id' => $loginUser['user_id'] ?? null,
+                    'username' => $loginUser['username'] ?? null,
+                    'token' => $token,
+                ],
             ];
 
             // Use meta fields if provided, else fallback to invoice fields
             $invoiceNumber = $meta['number'] ?? $invoice->number ?? null;
-            $invoiceDate = $meta['date'] ?? $invoice->invoice_date ?? ($invoice->created_at ? $invoice->created_at->format('Y-m-d') : now()->format('Y-m-d'));
+            $invoiceDate = $meta['date'] ?? $invoice->invoice_date ?? ($invoice->created_at ? $invoice->created_at->format('Y-m-d H:i:s') : now()->format('Y-m-d H:i:s'));
             $clientTIN = $meta['client_tin'] ?? $invoice->client->tin ?? null;
+            $customer_id = $meta['customer_id'] ?? 1;
+            $city_id = $meta['city_id'] ?? 1;
+            $automatic_payment_method_id = $meta['automatic_payment_method_id'] ?? 0;
+            $currency_id = $meta['currency_id'] ?? 1;
+            $cash_register_id = $meta['cash_register_id'] ?? 1;
+            $fiscal_invoice_type_id = $meta['fiscal_invoice_type_id'] ?? 4;
+            $fiscal_profile_id = $meta['fiscal_profile_id'] ?? 1;
 
-            // Build payload as per Elif API docs, with token, user_id, and username inside the invoice body
+            // Build payload as per API docs
             $payload = [
                 'body' => [
-                    array_merge([
+                    [
                         'cmd' => 'insert',
-                        'sales_date' => $invoiceDate ? (strlen($invoiceDate) <= 10 ? $invoiceDate . ' 00:00' : $invoiceDate) : null,
-                        'invoice_number' => $invoiceNumber,
-                        'business_unit' => $meta['business_unit'] ?? $invoice->business_unit ?? null,
-                        'issuer_tin' => $meta['issuer_tin'] ?? $invoice->issuer_tin ?? null,
-                        'invoice_type' => $meta['invoice_type'] ?? $invoice->invoice_type ?? null,
-                        'is_e_invoice' => isset($meta['is_e_invoice']) ? (bool)$meta['is_e_invoice'] : (bool)$invoice->is_e_invoice,
-                        'operator_code' => $meta['operator_code'] ?? $invoice->operator_code ?? null,
-                        'software_code' => $meta['software_code'] ?? $invoice->software_code ?? null,
-                        'payment_method' => $meta['payment_method'] ?? $invoice->payment_method ?? null,
-                        'total_amount' => isset($meta['total_amount']) ? (float)$meta['total_amount'] : (float)$invoice->total,
-                        'total_before_vat' => isset($meta['total_before_vat']) ? (float)$meta['total_before_vat'] : (float)$invoice->total_before_vat,
-                        'vat_amount' => isset($meta['vat_amount']) ? (float)$meta['vat_amount'] : (float)$invoice->vat_amount,
-                        'vat_rate' => isset($meta['vat_rate']) ? (float)$meta['vat_rate'] : (float)$invoice->vat_rate,
-                        'buyer_name' => $meta['buyer_name'] ?? $invoice->buyer_name ?? null,
-                        'buyer_address' => $meta['buyer_address'] ?? $invoice->buyer_address ?? null,
-                        'buyer_tax_number' => $meta['buyer_tax_number'] ?? $invoice->buyer_tax_number ?? null,
-                        'details' => $details,
-                    ], [
-                        'token' => $token,
-                        'user_id' => $loginUser['user_id'] ?? null,
-                        'username' => $loginUser['username'] ?? null,
-                    ])
+                        'sales_date' => $invoiceDate,
+                        'customer_name' => $invoice->client->name,
+                        'customer_id' => $customer_id,
+                        'exchange_rate' => 1,
+                        'city_id' => $city_id,
+                        'automatic_payment_method_id' => $automatic_payment_method_id,
+                        'currency_id' => $currency_id,
+                        'sales_document_serial' => '',
+                        'cash_register_id' => $cash_register_id,
+                        'fiscal_delay_reason_type' => null,
+                        'fiscal_invoice_type_id' => $fiscal_invoice_type_id,
+                        'fiscal_profile_id' => $fiscal_profile_id,
+                        'paid_amount' => number_format($invoice->total, 2, '.', ''),
+                        'customer_tax_id' => $clientTIN,
+                        'details' => array_map(function($item) {
+                            return [
+                                'sales_invoice_header_id' => null,
+                                'sales_invoice_detail_id' => null,
+                                'item_code' => $item->item_code ?? (string)($item->id),
+                                'item_name' => $item->item_name ?? $item->description ?? 'Unknown',
+                                'item_barcode' => $item->item_barcode ?? null,
+                                'item_total_with_tax_reporting_currency' => $item->item_total_with_tax_reporting_currency ?? number_format($item->total, 2, '.', ''),
+                                'item_type_id' => $item->item_type_id ?? 1,
+                                'item_price_without_tax' => $item->item_price_without_tax ?? number_format($item->item_total_before_vat ?? 0, 2, '.', ''),
+                                'item_price_with_tax' => $item->item_price_with_tax ?? number_format($item->price ?? 0, 2, '.', ''),
+                                'item_sales_tax_percentage' => $item->item_sales_tax_percentage ?? ($item->item_vat_rate ?? $item->vat_rate ?? 0),
+                                'item_total_without_tax' => $item->item_total_without_tax ?? number_format($item->item_total_before_vat ?? 0, 2, '.', ''),
+                                'item_quantity' => $item->item_quantity ?? $item->quantity ?? 1,
+                                'item_total_with_tax' => $item->item_total_with_tax ?? number_format($item->total ?? 0, 2, '.', ''),
+                                'item_total_tax' => $item->item_total_tax ?? number_format($item->item_vat_amount ?? 0, 2, '.', ''),
+                                'item_unit_id' => $item->item_unit_id ?? 21,
+                                'tax_rate_id' => $item->tax_rate_id ?? 2,
+                                'item_id' => $item->item_id ?? $item->id ?? null,
+                                'cmd' => 'insert',
+                            ];
+                        }, $invoice->items()->get()->all()),
+                    ]
                 ],
                 'IsEncrypted' => false,
                 'ServerConfig' => json_encode($serverConfig),
                 'App' => 'web',
                 'Language' => 'sq-AL',
             ];
+            \Log::info('DEBUG: Final fiscalization payload', ['payload' => $payload]);
             // Only use standard headers, no token headers
             $headers = [
                 'Content-Type' => 'application/json',

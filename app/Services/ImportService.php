@@ -56,14 +56,14 @@ class ImportService implements ImportServiceInterface
             $str = strtolower($str);
             // Replace all dash-like Unicode characters with ASCII hyphen
             $str = str_replace(['–', '—', '−', '‐', '‑', '‒', '–', '—', '―', '﹘', '﹣', '－'], '-', $str);
-            $str = preg_replace('/[\s\p{Zs}]+/u', '_', $str); // replace all whitespace with underscore
-            $str = preg_replace('/[^a-z0-9_]+/', '', $str); // remove all non-alphanumeric except underscore
+            $str = preg_replace('/[\s\p{Zs}]+/u', '_', $str); 
+            $str = preg_replace('/[^a-z0-9_]+/', '', $str); 
             return trim($str, '_');
         };
         $normalizedHeader = array_map($normalize, $headerRow);
         $foundFields = [];
         foreach ($headerAliases as $field => $aliases) {
-            foreach ($aliases as $alias) {
+            foreach ($aliases as $alias) { 
                 $normAlias = $normalize($alias);
                 if (in_array($normAlias, $normalizedHeader)) {
                     $foundFields[] = $field;
@@ -118,27 +118,31 @@ class ImportService implements ImportServiceInterface
             $sheet = $rows[0] ?? [];
             // PRE-VALIDATE required fields/headers before any parsing
             $this->validateRequiredFields($sheet);
-            // Always treat the first row as the header row (A1, B1, ..., W1)
+            // Build header map from first row using normalized snake_case header names
             $headerRow = $sheet[0];
+            $headerMap = [];
+            foreach ($headerRow as $idx => $cell) {
+                $normalized = strtolower(trim(preg_replace('/[^a-z0-9]+/', '_', iconv('UTF-8', 'ASCII//TRANSLIT', $cell))));
+                $normalized = trim($normalized, '_');
+                $headerMap[$normalized] = $idx;
+            }
+            $expected = ['client_name','client_email','client_address','client_phone','invoice_total','invoice_status','item_description','item_quantity','item_price','item_total'];
+            // Add support for new fiscalization header set
+            $expectedFiscalization = [
+                'invoice_number','invoice_date','business_unit','issuer_tin','invoice_type','is_e_invoice','operator_code','software_code','payment_method','total_amount','total_before_vat','vat_amount','vat_rate','buyer_name','buyer_address','buyer_tax_number','customer_id','city_id','automatic_payment_method_id','currency_id','cash_register_id','fiscal_invoice_type_id','fiscal_profile_id','item_name','item_quantity','item_price','item_vat_rate','item_total_before_vat','item_vat_amount','unit','item_unit_id','tax_rate_id','item_id'
+            ];
             $normalize = function($str) {
                 $str = iconv('UTF-8', 'ASCII//TRANSLIT', $str);
                 $str = strtolower($str);
+                // Replace all dash-like Unicode characters with ASCII hyphen
                 $str = str_replace(['–', '—', '−', '‐', '‑', '‒', '–', '—', '―', '﹘', '﹣', '－'], '-', $str);
                 $str = preg_replace('/[\s\p{Zs}]+/u', '_', $str); // replace all whitespace with underscore
                 $str = preg_replace('/[^a-z0-9_]+/', '', $str); // remove all non-alphanumeric except underscore
                 return trim($str, '_');
             };
-            $headerMap = [];
-            foreach ($headerRow as $idx => $cell) {
-                $normalized = $normalize($cell);
-                $headerMap[$normalized] = $idx;
-            }
-            \Log::info('DEBUG: Header map', ['headerMap' => $headerMap]);
             $normalizedHeaderRow = array_map($normalize, $headerRow);
-            // Add support for new fiscalization header set
-            $expectedFiscalization = [
-                'invoice_number','invoice_date','business_unit','issuer_tin','invoice_type','is_e_invoice','operator_code','software_code','payment_method','total_amount','total_before_vat','vat_amount','vat_rate','buyer_name','buyer_address','buyer_tax_number','item_name','item_quantity','item_price','item_vat_rate','item_total_before_vat','item_vat_amount','unit'
-            ];
+            \Log::info('DEBUG: Raw header row', ['headerRow' => $headerRow]);
+            \Log::info('DEBUG: Normalized header row', ['normalizedHeaderRow' => $normalizedHeaderRow]);
             \Log::info('DEBUG: Expected fiscalization headers', ['expectedFiscalization' => $expectedFiscalization]);
             // Allow 'unit' to be optional
             $expectedFiscalizationOptionalUnit = $expectedFiscalization;
@@ -172,29 +176,29 @@ class ImportService implements ImportServiceInterface
                 for ($i = 1; $i < count($sheet); $i++) {
                     $row = $sheet[$i];
                     $rowNum = $i + 1;
-                    // Skip empty or malformed rows (all cells empty or whitespace)
-                    if (!is_array($row) || count(array_filter($row, function($v) {
-                        return $v !== null && trim((string)$v) !== '';
-                    })) === 0) {
+                    // Skip empty or malformed rows
+                    if (!is_array($row) || count(array_filter($row, fn($v) => $v !== null && $v !== '')) === 0) {
                         continue;
+                    }
+                    // Clean up non-breaking spaces in all string fields
+                    $replace_nbsp = function($v) {
+                        return is_string($v) ? str_replace("\xC2\xA0", ' ', $v) : $v;
+                    };
+                    foreach ([
+                        'invoice_number','business_unit','issuer_tin','invoice_type','is_e_invoice','operator_code','software_code','payment_method','buyer_name','buyer_address','buyer_tax_number','item_name','unit'
+                    ] as $field) {
+                        if (isset($data[$field])) $data[$field] = $replace_nbsp($data[$field]);
                     }
                     // Build associative array for the row using headerMap
                     $data = [];
                     foreach ($headerMap as $key => $idx) {
-                        $data[$key] = array_key_exists($idx, $row) ? $row[$idx] : null;
+                        $data[$key] = isset($row[$idx]) ? $row[$idx] : null;
                     }
-                    \Log::info('DEBUG: Data mapping', ['rowNum' => $rowNum, 'data' => $data]);
+                    // Log the data row before validation
+                    \Log::info('DEBUG: Processing data row', ['rowNum' => $rowNum, 'row' => $row, 'data' => $data]);
                     // Extract all required fields from $data
                     $invoice_number = $data['invoice_number'] ?? null;
                     $invoice_date = $data['invoice_date'] ?? null;
-                    // Convert 'd/m/Y H:i' to 'Y-m-d H:i:s' for DB
-                    $invoice_date_db = null;
-                    if (!empty($invoice_date)) {
-                        $dt = \DateTime::createFromFormat('d/m/Y H:i', $invoice_date);
-                        if ($dt) {
-                            $invoice_date_db = $dt->format('Y-m-d H:i:s');
-                        }
-                    }
                     $business_unit = $data['business_unit'] ?? null;
                     $issuer_tin = $data['issuer_tin'] ?? null;
                     $invoice_type = $data['invoice_type'] ?? null;
@@ -215,6 +219,17 @@ class ImportService implements ImportServiceInterface
                     $item_vat_rate = $data['item_vat_rate'] ?? null;
                     $item_total_before_vat = $data['item_total_before_vat'] ?? null;
                     $item_vat_amount = $data['item_vat_amount'] ?? null;
+                    $customer_id = $data['customer_id'] ?? 1;
+                    $city_id = $data['city_id'] ?? 1;
+                    $automatic_payment_method_id = $data['automatic_payment_method_id'] ?? 0;
+                    $currency_id = $data['currency_id'] ?? 1;
+                    $cash_register_id = $data['cash_register_id'] ?? 1;
+                    $fiscal_invoice_type_id = $data['fiscal_invoice_type_id'] ?? 4;
+                    $fiscal_profile_id = $data['fiscal_profile_id'] ?? 1;
+                    $item_unit_id = $data['item_unit_id'] ?? 21;
+                    $tax_rate_id = $data['tax_rate_id'] ?? 2;
+                    $item_id = $data['item_id'] ?? null;
+                    $item_type_id = $data['item_type_id'] ?? 1;
                     // Normalize boolean-like and enum fields before validation
                     if (is_string($is_e_invoice)) {
                         $val = strtolower(trim($is_e_invoice));
@@ -232,17 +247,47 @@ class ImportService implements ImportServiceInterface
                         elseif ($pm === 'card payment') $payment_method = 'Card Payment';
                         elseif ($pm === 'bank transfer') $payment_method = 'Bank Transfer';
                     }
+                    // Improved invoice_date validation and parsing
+                    $parsedDate = null;
+                    if (!empty($invoice_date)) {
+                        if (is_numeric($invoice_date)) {
+                            // Excel serial date to PHP date
+                            $unixDate = ($invoice_date - 25569) * 86400;
+                            $parsedDate = gmdate('d/m/Y H:i', $unixDate);
+                        } else {
+                            // Try both formats
+                            $dt = \DateTime::createFromFormat('d/m/Y H:i', $invoice_date) ?: \DateTime::createFromFormat('Y-m-d H:i', $invoice_date) ?: \DateTime::createFromFormat('Y-m-d H:i:s', $invoice_date);
+                            if ($dt) {
+                                $parsedDate = $dt->format('d/m/Y H:i');
+                            }
+                        }
+                    }
+                    if (empty($parsedDate)) {
+                        $errorsForRow[] = "invoice_date required or invalid format (expected: YYYY-MM-DD HH:MM:SS or DD/MM/YYYY HH:MM)";
+                    } else {
+                        $invoice_date = $parsedDate;
+                    }
+                    // After parsing and validating $invoice_date, convert to DB format for insert
+                    $invoice_date_db = null;
+                    if (!empty($invoice_date)) {
+                        $dt_db = \DateTime::createFromFormat('d/m/Y H:i', $invoice_date);
+                        if ($dt_db) {
+                            $invoice_date_db = $dt_db->format('Y-m-d H:i:s');
+                        }
+                    }
                     // Validation rules (example, should be moved to a validator class)
                     $errorsForRow = [];
+                    $allowed_payment_methods = ['Banknotes and coins', 'Card Payment', 'Bank Transfer'];
+                    $allowed_invoice_types = ['Cash Invoice', 'Electronic'];
                     if (empty($invoice_number)) $errorsForRow[] = 'invoice_number required';
-                    if (empty($invoice_date) || !\DateTime::createFromFormat('d/m/Y H:i', $invoice_date)) $errorsForRow[] = 'invoice_date required or invalid format';
+                    if (empty($invoice_date) || !\DateTime::createFromFormat('d/m/Y H:i', $invoice_date)) $errorsForRow[] = "invoice_date required or invalid format (expected: YYYY-MM-DD HH:MM:SS or DD/MM/YYYY HH:MM)";
                     if (empty($business_unit)) $errorsForRow[] = 'business_unit required';
                     if (empty($issuer_tin) || strlen($issuer_tin) !== 10) $errorsForRow[] = 'issuer_tin required or invalid';
-                    if (empty($invoice_type) || !in_array($invoice_type, ['Cash Invoice', 'Electronic'])) $errorsForRow[] = 'invoice_type required or invalid';
+                    if (empty($invoice_type) || !in_array($invoice_type, $allowed_invoice_types)) $errorsForRow[] = "invoice_type required or invalid (allowed: " . implode(', ', $allowed_invoice_types) . ")";
                     if (!in_array($is_e_invoice, ['0', '1', 'true', 'false', 0, 1, true, false], true)) $errorsForRow[] = 'is_e_invoice required or invalid';
                     if (empty($operator_code)) $errorsForRow[] = 'operator_code required';
                     if (empty($software_code)) $errorsForRow[] = 'software_code required';
-                    if (empty($payment_method) || !in_array($payment_method, ['Banknotes and coins', 'Card Payment', 'Bank Transfer'])) $errorsForRow[] = 'payment_method required or invalid';
+                    if (empty($payment_method) || !in_array($payment_method, $allowed_payment_methods)) $errorsForRow[] = "payment_method required or invalid (allowed: " . implode(', ', $allowed_payment_methods) . ")";
                     if (!is_numeric($total_amount) || $total_amount < 0) $errorsForRow[] = 'total_amount required or invalid';
                     if (!is_numeric($total_before_vat) || $total_before_vat < 0) $errorsForRow[] = 'total_before_vat required or invalid';
                     if (!is_numeric($vat_amount) || $vat_amount < 0) $errorsForRow[] = 'vat_amount required or invalid';
@@ -255,8 +300,8 @@ class ImportService implements ImportServiceInterface
                     if (!is_numeric($item_total_before_vat) || $item_total_before_vat < 0) $errorsForRow[] = 'item_total_before_vat required or invalid';
                     if (!is_numeric($item_vat_amount) || $item_vat_amount < 0) $errorsForRow[] = 'item_vat_amount required or invalid';
                     // VAT calculation check
-                    if (abs(($total_before_vat + $vat_amount) - $total_amount) > 0.01) $errorsForRow[] = 'VAT calculation mismatch (invoice)';
-                    if (abs(($item_total_before_vat + $item_vat_amount) - ($item_price * $item_quantity)) > 0.01) $errorsForRow[] = 'VAT calculation mismatch (item)';
+                    if (abs(round($total_before_vat + $vat_amount, 2) - round($total_amount, 2)) > 0.01) $errorsForRow[] = 'VAT calculation mismatch (invoice)';
+                    if (abs(round($item_total_before_vat + $item_vat_amount, 2) - round($item_price * $item_quantity, 2)) > 0.01) $errorsForRow[] = 'VAT calculation mismatch (item)';
                     if (!empty($errorsForRow)) {
                         $errors[] = "Row $rowNum: " . implode('; ', $errorsForRow);
                         continue;
@@ -284,7 +329,7 @@ class ImportService implements ImportServiceInterface
                             'status' => 'pending',
                             'created_by' => $userId,
                             'number' => $invoice_number,
-                            'invoice_date' => $invoice_date_db,
+                            'invoice_date' => $invoice_date_db ?? $invoice_date,
                         ]);
                         $invoiceMap[$invoiceKey] = $invoice;
                         $createdInvoiceIds[] = $invoice->id;
@@ -293,35 +338,49 @@ class ImportService implements ImportServiceInterface
                             'number' => $invoice_number,
                             'date' => $invoice_date,
                             'client_tin' => $issuer_tin,
-                            'business_unit' => $business_unit,
-                            'issuer_tin' => $issuer_tin,
-                            'invoice_type' => $invoice_type,
-                            'is_e_invoice' => $is_e_invoice,
-                            'operator_code' => $operator_code,
-                            'software_code' => $software_code,
-                            'payment_method' => $payment_method,
-                            'total_amount' => $total_amount,
-                            'total_before_vat' => $total_before_vat,
-                            'vat_amount' => $vat_amount,
-                            'vat_rate' => $vat_rate,
-                            'buyer_name' => $buyer_name,
-                            'buyer_address' => $buyer_address,
-                            'buyer_tax_number' => $buyer_tax_number,
                         ];
                     } else {
                         $invoice = $invoiceMap[$invoiceKey];
                     }
+                    // Explicitly assign from Excel data for correct VAT/price calculations
+                    $item_total_before_vat = isset($data['item_total_before_vat']) ? (float)$data['item_total_before_vat'] : null;
+                    $item_vat_amount = isset($data['item_vat_amount']) ? (float)$data['item_vat_amount'] : null;
+                    \Log::info('DEBUG: Item VAT/price values', [
+                        'item_total_before_vat' => $item_total_before_vat,
+                        'item_vat_amount' => $item_vat_amount,
+                        'item_price' => $item_price,
+                        'item_quantity' => $item_quantity,
+                        'item_vat_rate' => $item_vat_rate,
+                        'row_data' => $data
+                    ]);
+                    // Use Excel values for VAT/price fields if present
+                    $item_total_with_tax = $item_price * $item_quantity;
+                    $item_total_without_tax = ($item_total_before_vat !== null) ? $item_total_before_vat : round($item_total_with_tax / (1 + ($item_vat_rate / 100)), 2);
+                    $item_total_tax = ($item_vat_amount !== null) ? $item_vat_amount : ($item_total_with_tax - $item_total_without_tax);
+                    $item_price_with_tax = $item_price;
+                    $item_price_without_tax = ($item_quantity > 0) ? round($item_total_without_tax / $item_quantity, 2) : 0;
+                    $item_amount = $item_price * $item_quantity;
                     // Collect item data for this invoice
                     $invoiceItemsMap[$invoiceKey][] = [
-                        'description' => $item_name,
                         'item_name' => $item_name,
                         'quantity' => $item_quantity,
                         'price' => $item_price,
-                        'total' => $item_total_before_vat + $item_vat_amount,
-                        'unit' => $data['unit'] ?? null,
+                        'total' => $item_amount,
+                        'unit' => $business_unit,
                         'vat_rate' => $item_vat_rate,
                         'vat_amount' => $item_vat_amount,
                         'currency' => $payment_method,
+                        'item_unit_id' => $item_unit_id,
+                        'tax_rate_id' => $tax_rate_id,
+                        'item_id' => $item_id,
+                        'item_type_id' => $item_type_id,
+                        // Fiscalization-specific fields
+                        'item_price_with_tax' => $item_price_with_tax,
+                        'item_price_without_tax' => $item_price_without_tax,
+                        'item_total_with_tax' => $item_total_with_tax,
+                        'item_total_without_tax' => $item_total_without_tax,
+                        'item_total_tax' => $item_total_tax,
+                        'item_sales_tax_percentage' => $item_vat_rate,
                     ];
                 }
                 // Now, create items and fiscalize for each invoice
@@ -340,7 +399,15 @@ class ImportService implements ImportServiceInterface
                     // Fiscalize after all items are created
                     try {
                         $fiscalizationService = new FiscalizationService();
-                        $meta = $invoiceMeta[$invoiceKey] ?? [];
+                        $meta = array_merge($invoiceMeta[$invoiceKey] ?? [], [
+                            'customer_id' => $customer_id,
+                            'city_id' => $city_id,
+                            'automatic_payment_method_id' => $automatic_payment_method_id,
+                            'currency_id' => $currency_id,
+                            'cash_register_id' => $cash_register_id,
+                            'fiscal_invoice_type_id' => $fiscal_invoice_type_id,
+                            'fiscal_profile_id' => $fiscal_profile_id,
+                        ]);
                         $verificationUrl = $fiscalizationService->fiscalize($invoice, $meta);
                         $createdInvoices[] = [
                             'id' => $invoice->id,
@@ -349,17 +416,11 @@ class ImportService implements ImportServiceInterface
                             'total' => $invoice->total,
                             'fiscalization_url' => $verificationUrl,
                         ];
-                        \Log::info('DEBUG: Fiscalized invoice', ['invoice_id' => $invoice->id, 'url' => $verificationUrl]);
                     } catch (\Exception $e) {
                         $errors[] = "Fiscalization failed for invoice ID {$invoice->id}: " . $e->getMessage();
                     }
                 }
-                // Set import status based on errors
-                if (!empty($errors)) {
-                    $import->status = 'failed';
-                } else {
-                    $import->status = 'completed';
-                }
+                $import->status = 'completed';
                 $import->save();
             } else {
                 // Always attempt custom report parsing if not a flat table
