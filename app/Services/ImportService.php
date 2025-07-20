@@ -129,7 +129,7 @@ class ImportService implements ImportServiceInterface
             $expected = ['client_name','client_email','client_address','client_phone','invoice_total','invoice_status','item_description','item_quantity','item_price','item_total'];
             // Add support for new fiscalization header set
             $expectedFiscalization = [
-                'invoice_number','invoice_date','business_unit','issuer_tin','invoice_type','is_e_invoice','operator_code','software_code','payment_method','total_amount','total_before_vat','vat_amount','vat_rate','buyer_name','buyer_address','buyer_tax_number','customer_id','city_id','automatic_payment_method_id','currency_id','cash_register_id','fiscal_invoice_type_id','fiscal_profile_id','item_name','item_quantity','item_price','item_vat_rate','item_total_before_vat','item_vat_amount','unit','item_unit_id','tax_rate_id','item_id'
+                'invoice_number','invoice_date','business_unit','issuer_tin','invoice_type','is_e_invoice','operator_code','software_code','payment_method','total_amount','total_before_vat','vat_amount','vat_rate','buyer_name','buyer_address','buyer_tax_number','customer_id','city_id','automatic_payment_method_id','currency_id','cash_register_id','fiscal_invoice_type_id','fiscal_profile_id','item_name','item_quantity','item_price','item_vat_rate','item_total_before_vat','item_vat_amount','unit','item_unit_id','tax_rate_id','item_id','item_type_id','item_code','warehouse_id'
             ];
             $normalize = function($str) {
                 $str = iconv('UTF-8', 'ASCII//TRANSLIT', $str);
@@ -223,13 +223,15 @@ class ImportService implements ImportServiceInterface
                     $city_id = $data['city_id'] ?? 1;
                     $automatic_payment_method_id = $data['automatic_payment_method_id'] ?? 0;
                     $currency_id = $data['currency_id'] ?? 1;
-                    $cash_register_id = $data['cash_register_id'] ?? 1;
+                    $cash_register_id = $data['cash_register_id'] ?? 9;
                     $fiscal_invoice_type_id = $data['fiscal_invoice_type_id'] ?? 4;
                     $fiscal_profile_id = $data['fiscal_profile_id'] ?? 1;
                     $item_unit_id = $data['item_unit_id'] ?? 21;
                     $tax_rate_id = $data['tax_rate_id'] ?? 2;
                     $item_id = $data['item_id'] ?? null;
                     $item_type_id = $data['item_type_id'] ?? 1;
+                    $item_code = $data['item_code'] ?? null;
+                    $warehouse_id = $data['warehouse_id'] ?? null;
                     // Normalize boolean-like and enum fields before validation
                     if (is_string($is_e_invoice)) {
                         $val = strtolower(trim($is_e_invoice));
@@ -250,30 +252,19 @@ class ImportService implements ImportServiceInterface
                     // Improved invoice_date validation and parsing
                     $parsedDate = null;
                     if (!empty($invoice_date)) {
-                        if (is_numeric($invoice_date)) {
-                            // Excel serial date to PHP date
-                            $unixDate = ($invoice_date - 25569) * 86400;
-                            $parsedDate = gmdate('d/m/Y H:i', $unixDate);
-                        } else {
-                            // Try both formats
-                            $dt = \DateTime::createFromFormat('d/m/Y H:i', $invoice_date) ?: \DateTime::createFromFormat('Y-m-d H:i', $invoice_date) ?: \DateTime::createFromFormat('Y-m-d H:i:s', $invoice_date);
-                            if ($dt) {
-                                $parsedDate = $dt->format('d/m/Y H:i');
-                            }
-                        }
-                    }
-                    if (empty($parsedDate)) {
-                        $errorsForRow[] = "invoice_date required or invalid format (expected: YYYY-MM-DD HH:MM:SS or DD/MM/YYYY HH:MM)";
-                    } else {
-                        $invoice_date = $parsedDate;
-                    }
-                    // After parsing and validating $invoice_date, convert to DB format for insert
-                    $invoice_date_db = null;
-                    if (!empty($invoice_date)) {
+                        $invoice_date = str_replace("\xC2\xA0", " ", $invoice_date); // Replace non-breaking space with normal space
                         $dt_db = \DateTime::createFromFormat('d/m/Y H:i', $invoice_date);
                         if ($dt_db) {
                             $invoice_date_db = $dt_db->format('Y-m-d H:i:s');
+                        } else {
+                            $dt_db_alt = \DateTime::createFromFormat('Y-m-d H:i:s', $invoice_date);
+                            if ($dt_db_alt) {
+                                $invoice_date_db = $dt_db_alt->format('Y-m-d H:i:s');
+                            }
                         }
+                    }
+                    if (empty($invoice_date_db)) {
+                        $errorsForRow[] = "invoice_date required or invalid format (expected: YYYY-MM-DD HH:MM:SS or DD/MM/YYYY HH:MM)";
                     }
                     // Validation rules (example, should be moved to a validator class)
                     $errorsForRow = [];
@@ -301,7 +292,12 @@ class ImportService implements ImportServiceInterface
                     if (!is_numeric($item_vat_amount) || $item_vat_amount < 0) $errorsForRow[] = 'item_vat_amount required or invalid';
                     // VAT calculation check
                     if (abs(round($total_before_vat + $vat_amount, 2) - round($total_amount, 2)) > 0.01) $errorsForRow[] = 'VAT calculation mismatch (invoice)';
-                    if (abs(round($item_total_before_vat + $item_vat_amount, 2) - round($item_price * $item_quantity, 2)) > 0.01) $errorsForRow[] = 'VAT calculation mismatch (item)';
+                    if (abs(round($item_total_before_vat, 2) - round($item_price * $item_quantity, 2)) > 0.01) {
+                        $errorsForRow[] = 'Item total before VAT does not match quantity x price';
+                    }
+                    if (abs(round($item_vat_amount, 2) - round($item_total_before_vat * $item_vat_rate / 100, 2)) > 0.01) {
+                        $errorsForRow[] = 'Item VAT amount does not match base x VAT rate';
+                    }
                     if (!empty($errorsForRow)) {
                         $errors[] = "Row $rowNum: " . implode('; ', $errorsForRow);
                         continue;
@@ -329,7 +325,8 @@ class ImportService implements ImportServiceInterface
                             'status' => 'pending',
                             'created_by' => $userId,
                             'number' => $invoice_number,
-                            'invoice_date' => $invoice_date_db ?? $invoice_date,
+                            'invoice_date' => $invoice_date_db,
+                            'created_at' => now(),
                         ]);
                         $invoiceMap[$invoiceKey] = $invoice;
                         $createdInvoiceIds[] = $invoice->id;
@@ -374,6 +371,8 @@ class ImportService implements ImportServiceInterface
                         'tax_rate_id' => $tax_rate_id,
                         'item_id' => $item_id,
                         'item_type_id' => $item_type_id,
+                        'item_code' => $item_code,
+                        'warehouse_id' => $warehouse_id,
                         // Fiscalization-specific fields
                         'item_price_with_tax' => $item_price_with_tax,
                         'item_price_without_tax' => $item_price_without_tax,

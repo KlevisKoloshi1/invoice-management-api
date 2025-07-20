@@ -58,7 +58,7 @@ class FiscalizationService
                 $details[] = [
                     'sales_invoice_header_id' => null,
                     'sales_invoice_detail_id' => null,
-                    'item_code' => $item->item_id ?? null,
+                    'item_code' => $item->item_code ?? null,
                     'item_name' => $item->item_name ?? null,
                     'item_barcode' => null,
                     'item_total_with_tax_reporting_currency' => $item->item_total_with_tax ?? null,
@@ -73,6 +73,7 @@ class FiscalizationService
                     'item_unit_id' => $item->item_unit_id ?? null,
                     'tax_rate_id' => $item->tax_rate_id ?? null,
                     'item_id' => $item->item_id ?? null,
+                    'warehouse_id' => $item->warehouse_id ?? null,
                     'cmd' => 'insert',
                 ];
             }
@@ -110,7 +111,7 @@ class FiscalizationService
 
             // Use meta fields if provided, else fallback to invoice fields
             $invoiceNumber = $meta['number'] ?? $invoice->number ?? null;
-            $invoiceDate = $meta['date'] ?? $invoice->invoice_date ?? ($invoice->created_at ? $invoice->created_at->format('Y-m-d H:i:s') : now()->format('Y-m-d H:i:s'));
+            $invoiceDate = $invoice->invoice_date ?? ($invoice->created_at ? $invoice->created_at->format('Y-m-d H:i:s') : now()->format('Y-m-d H:i:s'));
             $clientTIN = $meta['client_tin'] ?? $invoice->client->tin ?? null;
             $customer_id = $meta['customer_id'] ?? 1;
             $city_id = $meta['city_id'] ?? 1;
@@ -143,7 +144,7 @@ class FiscalizationService
                             return [
                                 'sales_invoice_header_id' => null,
                                 'sales_invoice_detail_id' => null,
-                                'item_code' => $item->item_code ?? (string)($item->id),
+                                'item_code' => $item->item_code ?? null,
                                 'item_name' => $item->item_name ?? $item->description ?? 'Unknown',
                                 'item_barcode' => $item->item_barcode ?? null,
                                 'item_total_with_tax_reporting_currency' => $item->item_total_with_tax_reporting_currency ?? number_format($item->total, 2, '.', ''),
@@ -157,7 +158,8 @@ class FiscalizationService
                                 'item_total_tax' => $item->item_total_tax ?? number_format($item->item_vat_amount ?? 0, 2, '.', ''),
                                 'item_unit_id' => $item->item_unit_id ?? 21,
                                 'tax_rate_id' => $item->tax_rate_id ?? 2,
-                                'item_id' => $item->item_id ?? $item->id ?? null,
+                                'item_id' => $item->item_id ?? null,
+                                'warehouse_id' => $item->warehouse_id ?? null,
                                 'cmd' => 'insert',
                             ];
                         }, $invoice->items()->get()->all()),
@@ -182,6 +184,70 @@ class FiscalizationService
             ]);
             $responseBody = json_decode($response->getBody()->getContents(), true);
             \Log::info('Fiscalization response for invoice ' . $invoice->id, ['response' => $responseBody]);
+            // Check for cash register not opened error (code 638 or message contains 'celje')
+            $shouldRetry = false;
+            if (isset($responseBody['status']['code']) && $responseBody['status']['code'] == 638) {
+                $msg = strtolower($responseBody['status']['message'] ?? '');
+                if (strpos($msg, 'celje') !== false || strpos($msg, 'arken ne fillim te dites') !== false) {
+                    // Open cash register for the invoice date using cashdeskactualbalance.php
+                    $cash_desk_id = $cash_register_id ?? 9; // fallback to 9 if not set
+                    $now = now()->format('Y-m-d H:i');
+                    $openPayload = [
+                        'body' => [
+                            [
+                                'cmd' => 'insert',
+                                'cash_desK_actual_balance_header_id' => null,
+                                'counting_date_time' => $invoiceDate,
+                                'note' => null,
+                                'balance_type' => 2, // fiscal initial
+                                'fcbc_code' => null,
+                                'fiscal_delay_reason_type' => null,
+                                'UUID' => null,
+                                'details' => [
+                                    [
+                                        'cash_desk_actual_balance_detail_id' => null,
+                                        'cash_desk_actual_balance_header_id' => null,
+                                        'cash_desk_id' => $cash_desk_id,
+                                        'currency_id' => 1,
+                                        'amount' => '0',
+                                        'note' => null,
+                                        'exchange_rate' => 1,
+                                        'reporting_currency_total' => 0,
+                                        'current_amount' => '0',
+                                        'cash_transaction_header_id' => null
+                                    ]
+                                ]
+                            ]
+                        ],
+                        'IsEncrypted' => false,
+                        'ServerConfig' => json_encode($serverConfig),
+                        'App' => 'web',
+                        'Language' => 'sq-AL',
+                    ];
+                    \Log::info('Attempting to open cash register (fiscal initial)', ['payload' => $openPayload]);
+                    $openResponse = $this->client->post($this->config['url'] . '/cashdeskactualbalance.php', [
+                        'headers' => $headers,
+                        'json' => $openPayload,
+                        'cookies' => $jar,
+                    ]);
+                    $openBody = json_decode($openResponse->getBody()->getContents(), true);
+                    \Log::info('Cash register open response', ['response' => $openBody]);
+                    // Only retry if open succeeded (code 600)
+                    if (isset($openBody['status']['code']) && $openBody['status']['code'] == 600) {
+                        $shouldRetry = true;
+                    }
+                }
+            }
+            if ($shouldRetry) {
+                \Log::info('Retrying fiscalization after opening cash register');
+                $response = $this->client->post($this->config['url'] . '/sales.php', [
+                    'headers' => $headers,
+                    'json' => $payload,
+                    'cookies' => $jar,
+                ]);
+                $responseBody = json_decode($response->getBody()->getContents(), true);
+                \Log::info('Fiscalization response after retry for invoice ' . $invoice->id, ['response' => $responseBody]);
+            }
             if (isset($responseBody['status']['code']) && $responseBody['status']['code'] == 600) {
                 $invoice->fiscalization_response = json_encode($responseBody);
                 $invoice->fiscalized = true;

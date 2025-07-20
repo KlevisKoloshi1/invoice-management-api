@@ -97,9 +97,35 @@ A comprehensive Laravel-based invoice management system with fiscalization capab
 - `POST /api/imports` - Upload and process Excel file
 - `GET /api/imports/{id}` - Get import details
 
-## Excel Import Format
+## Full Fiscalization Excel Import Format
 
-The system supports two Excel formats:
+The system supports a comprehensive Excel format for fiscalization, matching the requirements of the Albanian tax system and 2RM Lab exports. Each row represents one invoice item. For invoices with multiple items, repeat the invoice columns and change only the item columns.
+
+**Required headers (order can vary):**
+
+```
+invoice_number, invoice_date, business_unit, issuer_tin, invoice_type, is_e_invoice, operator_code, software_code, payment_method, total_amount, total_before_vat, vat_amount, vat_rate, buyer_name, buyer_address, buyer_tax_number, customer_id, city_id, automatic_payment_method_id, currency_id, cash_register_id, fiscal_invoice_type_id, fiscal_profile_id, item_name, item_quantity, item_price, item_vat_rate, item_total_before_vat, item_vat_amount, unit, item_unit_id, tax_rate_id, item_id, item_type_id, item_code, warehouse_id
+```
+
+**Sample row:**
+```
+FSH10001, 20/07/2025 19:12, BU001, L8131000K5, Cash Invoice, No, OP001, SW001, Banknotes and coins, 2050, 1708.33, 341.67, 20, Test Client, Tirana, SKA, 1, 1, 0, 1, 9, 4, 1, artUPDATED, 10, 205, 20, 1708.33, 341.67, cope, 1, 2, 3, 1, art1, 5
+```
+
+- **Date format:** `DD/MM/YYYY HH:mm` (e.g., `20/07/2025 19:12`)
+- **Booleans:** Use `Yes`/`No` or `1`/`0` for fields like `is_e_invoice`.
+- **IDs:** Use your actual system IDs for fields like `customer_id`, `city_id`, `item_unit_id`, `tax_rate_id`, `item_id`, `item_type_id`, `warehouse_id`.
+- **For multi-item invoices:** Repeat the invoice columns and change only the item columns for each item.
+
+### Troubleshooting Fiscalization Import Errors
+
+- If you see errors like `Gabim ne nisjen e llojit te artikullit! (A3)`, check that the item is registered and active in the warehouse in your fiscalization system, and that the item type is correct.
+- Make sure all required columns are present and filled.
+- If you add new columns to the database, run migrations: `php artisan migrate`.
+
+## Legacy Excel Formats (for reference)
+
+The system previously supported the following formats, but the full fiscalization format above is now recommended for all new imports.
 
 ### Standard Format
 Headers: `client_name`, `client_email`, `client_address`, `client_phone`, `invoice_total`, `invoice_status`, `item_description`, `item_quantity`, `item_price`, `item_total`
@@ -210,81 +236,4 @@ All endpoints require authentication as an admin user unless otherwise specified
     }
     ```
 - **Error Responses:**
-  - `422 Unprocessable Entity`: Validation error (missing or invalid file)
-    ```json
-    { "errors": { "file": ["The file field is required."] } }
-    ```
-  - `403 Forbidden`: Not authenticated or not admin
-    ```json
-    { "error": "Forbidden" }
-    ```
-
----
-
-### 2. Update Import
-**PUT** `/api/imports/{id}`
-
-- **Description:** Update an import's status or replace the file (admin only).
-- **Request:**
-  - Content-Type: `multipart/form-data`
-  - Body (any of):
-    - `status`: string
-    - `file`: Excel file (.xlsx, .xls)
-- **Success Response:**
-  - Status: `200 OK`
-  - Body: Import object (JSON)
-- **Error Responses:**
-  - `422 Unprocessable Entity`: Validation error
-  - `403 Forbidden`: Not authenticated or not admin
-  - `400 Bad Request`: Other errors
-
----
-
-### 3. Delete Import
-**DELETE** `/api/imports/{id}`
-
-- **Description:** Delete an import (admin only).
-- **Success Response:**
-  - Status: `200 OK`
-  - Body:
-    ```json
-    { "message": "Import deleted successfully." }
-    ```
-- **Error Responses:**
-  - `403 Forbidden`: Not authenticated or not admin
-  - `400 Bad Request`: Other errors
-
----
-
-### 4. List Imports (Paginated)
-**GET** `/api/imports?per_page=15`
-
-- **Description:** List all imports (admin only, paginated).
-- **Request Parameters:**
-  - `per_page` (optional): Number of results per page (default: 15)
-- **Success Response:**
-  - Status: `200 OK`
-  - Body: Paginated list of imports (JSON)
-- **Error Responses:**
-  - `403 Forbidden`: Not authenticated or not admin
-
----
-
-### 5. Public List Imports (Paginated)
-**GET** `/public/imports?per_page=15`
-
-- **Description:** List all imports (public, paginated).
-- **Request Parameters:**
-  - `per_page` (optional): Number of results per page (default: 15)
-- **Success Response:**
-  - Status: `200 OK`
-  - Body: Paginated list of imports (JSON)
-
----
-
-### Error Codes
-- `200 OK`: Successful request
-- `201 Created`: Resource created
-- `400 Bad Request`: General error (see message)
-- `403 Forbidden`: Not authenticated or not admin
-- `422 Unprocessable Entity`: Validation error (see errors object)
+  - `

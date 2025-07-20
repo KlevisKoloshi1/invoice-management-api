@@ -25,6 +25,13 @@ class Invoice extends Model
         'buyer_name',
         'buyer_address',
         'buyer_tax_number',
+        'customer_id',
+        'city_id',
+        'automatic_payment_method_id',
+        'currency_id',
+        'cash_register_id',
+        'fiscal_invoice_type_id',
+        'fiscal_profile_id',
     ];
 
     public function client()

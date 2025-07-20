@@ -26,6 +26,10 @@ return new class extends Migration
             $table->decimal('item_vat_rate', 5, 2)->nullable();
             $table->decimal('item_total_before_vat', 12, 2)->nullable();
             $table->decimal('item_vat_amount', 12, 2)->nullable();
+            $table->unsignedBigInteger('item_unit_id')->nullable();
+            $table->unsignedBigInteger('tax_rate_id')->nullable();
+            $table->unsignedBigInteger('item_type_id')->nullable();
+            $table->string('item_code', 50)->nullable();
             $table->timestamps();
         });
     }
