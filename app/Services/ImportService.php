@@ -605,4 +605,30 @@ class ImportService implements ImportServiceInterface
     {
         return Import::with('user')->findOrFail($importId);
     }
+
+    public function callElifApi($endpoint, $body)
+    {
+        // Load these from config or .env as appropriate
+        $serverConfig = config('services.elif.server_config');
+        $app = config('services.elif.app', 'web');
+        $language = config('services.elif.language', 'sq-AL');
+
+        // Always include ServerConfig, App, and Language
+        $payload = [
+            'body' => $body,
+            'IsEncrypted' => false,
+            'ServerConfig' => $serverConfig,
+            'App' => $app,
+            'Language' => $language,
+        ];
+
+        $client = new \GuzzleHttp\Client();
+        $response = $client->post($endpoint, [
+            'headers' => [
+                'Content-Type' => 'application/json',
+            ],
+            'body' => json_encode($payload),
+        ]);
+        return json_decode($response->getBody(), true);
+    }
 } 
