@@ -120,7 +120,7 @@ class FiscalizationService
             $cash_register_id = $meta['cash_register_id'] ?? 1;
             $fiscal_invoice_type_id = $meta['fiscal_invoice_type_id'] ?? 4;
             $fiscal_profile_id = $meta['fiscal_profile_id'] ?? 1;
-
+            $warehouse_id = $meta['warehouse_id'] ?? ($items->first()->warehouse_id ?? null);
             // Build payload as per API docs
             $payload = [
                 'body' => [
@@ -131,6 +131,7 @@ class FiscalizationService
                         'customer_id' => $customer_id,
                         'exchange_rate' => 1,
                         'city_id' => $city_id,
+                        'warehouse_id' => $warehouse_id, // <-- Always include in header
                         'automatic_payment_method_id' => $automatic_payment_method_id,
                         'currency_id' => $currency_id,
                         'sales_document_serial' => '',

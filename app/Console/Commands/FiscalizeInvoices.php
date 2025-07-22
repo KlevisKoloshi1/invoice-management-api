@@ -32,7 +32,12 @@ class FiscalizeInvoices extends Command
         $service = new FiscalizationService();
         $invoices = Invoice::where('fiscalized', false)->get();
         foreach ($invoices as $invoice) {
-            $service->fiscalize($invoice);
+            $warehouseId = $invoice->warehouse_id ?? $invoice->items()->first()->warehouse_id ?? null;
+            if (!$warehouseId) {
+                \Log::error('Skipping fiscalization for invoice ' . $invoice->id . ': warehouse_id is missing.');
+                continue;
+            }
+            $service->fiscalize($invoice, ['warehouse_id' => $warehouseId]);
         }
         $this->info('Fiscalization process completed.');
     }

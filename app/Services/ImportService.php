@@ -406,6 +406,7 @@ class ImportService implements ImportServiceInterface
                             'cash_register_id' => $cash_register_id,
                             'fiscal_invoice_type_id' => $fiscal_invoice_type_id,
                             'fiscal_profile_id' => $fiscal_profile_id,
+                            'warehouse_id' => $warehouse_id, // Always include warehouse_id in meta
                         ]);
                         $verificationUrl = $fiscalizationService->fiscalize($invoice, $meta);
                         $createdInvoices[] = [

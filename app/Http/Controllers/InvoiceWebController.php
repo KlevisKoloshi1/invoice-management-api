@@ -30,12 +30,13 @@ class InvoiceWebController extends Controller
         $data = $request->validate([
             'client_id' => 'required|exists:clients,id',
             'total' => 'required|numeric|min:0.01',
+            'warehouse_id' => 'required|integer|min:1', // Require warehouse_id
             // Add other fields as needed
         ]);
         $data['created_by'] = auth()->id();
         $invoice = Invoice::create($data);
         $fiscalizationService = new FiscalizationService();
-        $fiscalizationService->fiscalize($invoice);
+        $fiscalizationService->fiscalize($invoice, ['warehouse_id' => $data['warehouse_id']]);
         return redirect()->route('invoices.show', $invoice);
     }
 
@@ -57,6 +58,7 @@ class InvoiceWebController extends Controller
             'client_id' => 'required|exists:clients,id',
             'total' => 'required|numeric|min:0.01',
             'status' => 'sometimes|string',
+            'warehouse_id' => 'required|integer|min:1', // Require warehouse_id
         ]);
         $invoice->update($data);
         return redirect()->route('invoices.show', $invoice)->with('status', 'Invoice updated.');
