@@ -120,7 +120,7 @@ class FiscalizationService
             $cash_register_id = $meta['cash_register_id'] ?? 1;
             $fiscal_invoice_type_id = $meta['fiscal_invoice_type_id'] ?? 4;
             $fiscal_profile_id = $meta['fiscal_profile_id'] ?? 1;
-            $warehouse_id = $meta['warehouse_id'] ?? ($items->first()->warehouse_id ?? null);
+            $warehouse_id = $meta['warehouse_id'] ?? $invoice->warehouse_id ?? ($items->first()->warehouse_id ?? null);
             // Build payload as per API docs
             $payload = [
                 'body' => [
@@ -141,7 +141,7 @@ class FiscalizationService
                         'fiscal_profile_id' => $fiscal_profile_id,
                         'paid_amount' => number_format($invoice->total, 2, '.', ''),
                         'customer_tax_id' => $clientTIN,
-                        'details' => array_map(function($item) {
+                        'details' => array_map(function($item) use ($warehouse_id) {
                             return [
                                 'sales_invoice_header_id' => null,
                                 'sales_invoice_detail_id' => null,
@@ -160,7 +160,7 @@ class FiscalizationService
                                 'item_unit_id' => $item->item_unit_id ?? 21,
                                 'tax_rate_id' => $item->tax_rate_id ?? 2,
                                 'item_id' => $item->item_id ?? null,
-                                'warehouse_id' => $item->warehouse_id ?? null,
+                                'warehouse_id' => $item->warehouse_id ?? $warehouse_id, // <-- fallback to header warehouse_id
                                 'cmd' => 'insert',
                             ];
                         }, $invoice->items()->get()->all()),
